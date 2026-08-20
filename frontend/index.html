@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Hermes K2 Monitor</title>
+<style>
+:root{
+  --bg:#0a0f14; --panel:#11181f; --panel2:#0d141b; --line:#1e2a35;
+  --txt:#c8d3dc; --dim:#5c6b76; --faint:#3a4document;
+  --green:#00ff9d; --blue:#3399ff; --red:#ff5470; --amber:#ffb454;
+  --mono:'IBM Plex Mono','SF Mono','Fira Code','Menlo','Consolas','DejaVu Sans Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:13px;min-height:100vh;padding:12px}
+.top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-bottom:10px;border-bottom:1px solid var(--line);margin-bottom:12px}
+.top h1{font-size:15px;font-weight:700;letter-spacing:1px;color:var(--green)}
+.top .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 2s infinite}
+.live{margin-left:auto;font-size:9px;color:var(--dim);letter-spacing:1px}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+.grid{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:10px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.panel-head{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--panel2);font-size:10px;letter-spacing:.5px;color:var(--dim)}
+.panel-head .stat{margin-left:auto;color:var(--green);font-size:10px}
+.panel-head .stat.flash{color:var(--green);transition:none}
+.panel-body{padding:10px}
+
+.agent-card{display:flex;align-items:center;gap:12px;padding:10px;border-radius:6px;margin-bottom:8px;border:1px solid var(--line);background:var(--panel2)}
+.agent-card .icn{flex:0 0 40px}
+.agent-card .info{min-width:0}
+.agent-card .name{font-size:12px;font-weight:600;letter-spacing:.5px}
+.agent-card .name.ye{color:var(--green)}
+.agent-card .name.me{color:var(--blue)}
+.agent-card .stat2{font-size:9px;color:var(--dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.badge-status{font-size:8px;padding:2px 6px;border-radius:3px;letter-spacing:.5px;text-transform:uppercase}
+.badge-status.working{background:rgba(0,255,157,.12);color:var(--green)}
+.badge-status.online{background:rgba(51,153,255,.12);color:var(--blue)}
+.badge-status.idle{background:rgba(255,180,84,.12);color:var(--amber)}
+
+.metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.metric{background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:8px}
+.metric .k{font-size:8px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
+.metric .v{font-size:16px;font-weight:700;color:var(--txt);margin-top:2px}
+.metric .v.g{color:var(--green)} .metric .v.b{color:var(--blue)}
+
+.task-col{background:var(--panel2);border:1px solid var(--line);border-radius:5px;max-height:340px;overflow-y:auto;padding:6px}
+.task-col h3{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;padding:4px 6px}
+.task-item{font-size:10px;padding:5px 8px;border-radius:4px;background:var(--panel);margin-bottom:4px;border-left:2px solid var(--line);position:relative;overflow:hidden}
+.task-item.pending{border-left-color:var(--amber)}
+.task-item.working{border-left-color:var(--green)}
+.task-item.done{border-left-color:var(--blue);opacity:.6}
+.task-item .t{color:var(--txt)}
+.task-item .s{font-size:8px;color:var(--dim);margin-top:1px}
+.task-item.new-task{animation:taskSlideIn .5s ease-out}
+@keyframes taskSlideIn{0%{opacity:0;transform:translateX(-14px)}100%{opacity:1;transform:translateX(0)}}
+@keyframes scanLine{0%{top:-100%}100%{top:100%}}
+.task-item.new-task::before{content:'';position:absolute;left:0;top:-100%;width:100%;height:100%;
+  background:linear-gradient(180deg,transparent 0%,rgba(0,255,157,.08) 50%,transparent 100%);animation:scanLine .6s ease-out .1s forwards;pointer-events:none}
+.task-item.working::after{content:'';position:absolute;top:0;left:-2px;width:2px;height:100%;background:var(--green);animation:cursorBlink 1.2s step-end infinite;opacity:.6}
+@keyframes cursorBlink{0%,100%{opacity:.6}50%{opacity:0}}
+
+.discussion-body{max-height:360px;min-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;padding:8px 10px}
+.chat-msg{display:flex;flex-direction:column;max-width:78%;padding:3px 10px;margin-bottom:5px;border-radius:5px;font-size:10px;line-height:1.35}
+.chat-msg.hermes1{align-self:flex-end;background:#0a1a12;border:1px solid rgba(0,255,157,.12);border-left:2px solid var(--green)}
+.chat-msg.hermes2{align-self:flex-start;background:#0a0a1a;border:1px solid rgba(51,153,255,.12);border-right:2px solid var(--blue)}
+.chat-msg.system{align-self:center;background:transparent;border:none;color:#454d4f;font-size:9px;padding:4px 8px}
+.chat-msg .msg-from{font-size:7px;font-weight:600;text-transform:uppercase;letter-spacing:.2px;margin-bottom:1px}
+.chat-msg.hermes1 .msg-from{color:var(--green)} .chat-msg.hermes2 .msg-from{color:var(--blue)} .chat-msg.system .msg-from{display:none}
+.chat-msg .msg-text{word-break:break-word}
+.chat-msg .msg-time{font-size:7px;color:#454d4f;margin-top:1px;text-align:right;align-self:flex-end}
+.chat-msg.msg-anim{animation:msgFadeIn .5s ease-out forwards;opacity:0}
+@keyframes msgFadeIn{0%{opacity:0;transform:translateY(8px)}100%{opacity:1;transform:translateY(0)}}
+.typing-indicator{align-self:flex-start;display:flex;gap:3px;padding:4px 10px}
+.typing-indicator span{width:4px;height:4px;border-radius:50%;animation:typingDot 1.4s ease-in-out infinite}
+.typing-indicator span:nth-child(1){background:var(--green);animation-delay:0s}
+.typing-indicator span:nth-child(2){background:var(--blue);animation-delay:.2s}
+.typing-indicator span:nth-child(3){background:#6b7678;animation-delay:.4s}
+@keyframes typingDot{0%,60%,100%{opacity:.2;transform:scale(.6)}30%{opacity:1;transform:scale(1)}}
+
+.scrollbar::-webkit-scrollbar{width:3px}
+.scrollbar::-webkit-scrollbar-thumb{background:#334155}
+.mob{display:none}
+@media(max-width:640px){
+  .dsk{display:none!important}
+  .mob{display:block!important}
+  .grid{grid-template-columns:1fr!important}
+  .task-col{display:block}
+  .mob-combined{display:block!important}
+}
+@media(min-width:641px){.mob{display:none!important}.dsk{display:grid!important}.mob-combined{display:none!important}}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <span class="dot"></span>
+  <h1>HERMES K2 MONITOR</h1>
+  <div class="live" id="clock">--:--:-- UTC</div>
+</div>
+
+<div class="grid dsk">
+  <!-- agents -->
+  <div class="panel">
+    <div class="panel-head">AGENTS <span class="stat" id="tasks-summary-stat">0</span></div>
+    <div class="panel-body">
+      <div class="agent-card"><div class="icn" id="icn-ye"></div>
+        <div class="info"><div class="name ye" id="ye-name">HERMES-1</div>
+          <div class="stat2" id="ye-task">idle</div></div>
+        <span class="badge-status" id="ye-status">online</span></div>
+      <div class="agent-card"><div class="icn" id="icn-me"></div>
+        <div class="info"><div class="name me" id="me-name">HERMES-2</div>
+          <div class="stat2" id="me-task">idle</div></div>
+        <span class="badge-status" id="me-status">online</span></div>
+      <div class="metrics">
+        <div class="metric"><div class="k">CPU</div><div class="v" id="m-cpu">-</div></div>
+        <div class="metric"><div class="k">RAM</div><div class="v" id="m-ram">-</div></div>
+        <div class="metric"><div class="k">DISK</div><div class="v" id="m-disk">-</div></div>
+        <div class="metric"><div class="k">UPTIME</div><div class="v" id="m-up">-</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- tasks board -->
+  <div class="panel">
+    <div class="panel-head">TASK BOARD <span class="stat" id="tasks-summary">0</span></div>
+    <div class="panel-body" id="tasks-body" style="display:grid;grid-template-columns:1fr 1fr 1.3fr">
+      <div class="task-col"><h3>PENDING</h3><div id="col-pending"></div></div>
+      <div class="task-col"><h3>WORKING</h3><div id="col-working"></div></div>
+      <div class="task-col"><h3>DONE</h3><div id="col-done"></div></div>
+      <div class="task-col mob-combined" id="col-mobile" style="display:none;grid-column:1/-1;max-height:340px">
+        <h3>ALL TASKS</h3><div id="col-mobile-list"></div></div>
+    </div>
+  </div>
+
+  <!-- discussion -->
+  <div class="panel">
+    <div class="panel-head">AGENT DISCUSSION <span class="stat">live</span></div>
+    <div class="discussion-body scrollbar" id="discussion-body"><div id="chat-feed"></div></div>
+  </div>
+</div>
+
+<div class="mob">
+  <div class="panel" style="margin-bottom:10px">
+    <div class="panel-head">AGENTS</div>
+    <div class="panel-body">
+      <div class="agent-card"><div class="info"><div class="name ye">HERMES-1</div>
+        <div class="stat2" id="ye-task-m">idle</div></div><span class="badge-status" id="ye-status-m">online</span></div>
+      <div class="agent-card"><div class="info"><div class="name me">HERMES-2</div>
+        <div class="stat2" id="me-task-m">idle</div></div><span class="badge-status" id="me-status-m">online</span></div>
+    </div>
+  </div>
+  <div class="panel" style="margin-bottom:10px">
+    <div class="panel-head">ALL METRICS</div>
+    <div class="panel-body"><div class="metrics">
+      <div class="metric"><div class="k">CPU</div><div class="v" id="m-cpu-m">-</div></div>
+      <div class="metric"><div class="k">RAM</div><div class="v" id="m-ram-m">-</div></div>
+    </div></div>
+  </div>
+  <div class="panel" style="margin-bottom:10px">
+    <div class="panel-head">ALL TASKS</div>
+    <div class="panel-body"><div class="task-col mob-combined" style="display:block;max-height:340px" id="col-mobile-m"></div></div>
+  </div>
+  <div class="panel">
+    <div class="panel-head">DISCUSSION</div>
+    <div class="discussion-body scrollbar" id="discussion-body-m"><div id="chat-feed-m"></div></div>
+  </div>
+</div>
+
+<script>
+var S={agents:{hermes1:{status:'online',task:null},hermes2:{status:'online',task:null}},
+        tasks:{pending:[],processing:[],done:[]},discussion:[],stats:{}};
+var discussionEntries=[];
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+
+/* ---- SVG icons ---- */
+var svgYe='<svg viewBox="0 0 24 24" fill="none" stroke="#00ff9d" stroke-width="1.4"><rect x="9" y="9" width="6" height="6" transform="rotate(45 12 12)"/><circle cx="12" cy="12" r="2" fill="#00ff9d"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(30 12 12)" opacity=".35"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(-60 12 12)" opacity=".2"/></svg>';
+var svgMe='<svg viewBox="0 0 24 24" fill="none" stroke="#3399ff" stroke-width="1.4"><path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><circle cx="12" cy="12" r="2.5" fill="#3399ff"/><path d="M12 9.5l3 2.5-3 2.5-3-2.5z" stroke="#3399ff"/></svg>';
+document.getElementById('icn-ye').innerHTML=svgYe;
+document.getElementById('icn-me').innerHTML=svgMe;
+
+/* ---- render ---- */
+function render(){
+  if(document.getElementById('ye-task')){
+    document.getElementById('ye-status').textContent=S.agents.hermes1.status;
+    document.getElementById('ye-status').className='badge-status '+S.agents.hermes1.status;
+    document.getElementById('ye-task').textContent=S.agents.hermes1.task||'idle';
+    document.getElementById('me-status').textContent=S.agents.hermes2.status;
+    document.getElementById('me-status').className='badge-status '+S.agents.hermes2.status;
+    document.getElementById('me-task').textContent=S.agents.hermes2.task||'idle';
+    document.getElementById('m-cpu').textContent=(S.health&&S.health.cpu!=null)?S.health.cpu+'%':'-';
+    document.getElementById('m-ram').textContent=(S.health&&S.health.ram_used_mb)?Math.round(S.health.ram_used_mb/1024)+'G':' -';
+    document.getElementById('m-disk').textContent=(S.health&&S.health.disk_used_gb)?S.health.disk_used_gb+'G':'-';
+    var up=S.health&&S.health.uptime?S.health.uptime:0;
+    document.getElementById('m-up').textContent=fmtUp(up);
+  }
+  if(document.getElementById('ye-task-m')){
+    document.getElementById('ye-task-m').textContent=S.agents.hermes1.task||S.agents.hermes1.status;
+    document.getElementById('ye-status-m').textContent=S.agents.hermes1.status;
+    document.getElementById('ye-status-m').className='badge-status '+S.agents.hermes1.status;
+    document.getElementById('me-task-m').textContent=S.agents.hermes2.task||S.agents.hermes2.status;
+    document.getElementById('me-status-m').textContent=S.agents.hermes2.status;
+    document.getElementById('me-status-m').className='badge-status '+S.agents.hermes2.status;
+    document.getElementById('m-cpu-m').textContent=(S.health&&S.health.cpu!=null)?S.health.cpu+'%':'-';
+    document.getElementById('m-ram-m').textContent=(S.health&&S.health.ram_used_mb)?Math.round(S.health.ram_used_mb/1024)+'G':' -';
+  }
+  renderTasks(S.tasks);
+  var tot=(S.tasks.pending||[]).length+(S.tasks.processing||[]).length+(S.tasks.done||[]).length;
+  if(document.getElementById('tasks-summary'))document.getElementById('tasks-summary').textContent=tot;
+  renderChat();
+}
+function fmtUp(s){if(!s)return'-';var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return(d?d+'d ':'')+h+'h '+m+'m';}
+
+function renderTasks(tasks){
+  t=(tasks||{});
+  var cols={pending:'col-pending',working:'col-working',done:'col-done'};
+  var maps={pending:[],working:[],done:[]};
+  (t.pending||[]).forEach(function(x){maps.pending.push(['pending',x]);});
+  (t.processing||[]).forEach(function(x){maps.working.push(['working',x]);});
+  (t.done||[]).forEach(function(x){maps.done.push(['done',x]);});
+  function htmlM(items){
+    return items.map(function(it){var c=it[0],x=it[1];return '<div class="task-item '+c+'"><div class="t">'+esc(x.title||x.id)+'</div><div class="s">'+(x.assigned_to?esc(x.assigned_to):'')+'</div></div>';}).join('');
+  }
+  Object.keys(cols).forEach(function(key){
+    var el=document.getElementById(cols[key]);
+    if(el){el.innerHTML=htmlM(maps[key]);}
+  });
+  var mob=document.getElementById('col-mobile-list')||document.getElementById('col-mobile-m');
+  if(mob){
+    var all=maps.pending.concat(maps.working,maps.done);
+    mob.innerHTML=htmlM(all);
+  }
+}
+
+function renderChat(animateNew){
+  // desktop
+  var feed=document.getElementById('chat-feed');
+  if(feed){feed.innerHTML=chatHTML(discussionEntries,animateNew);}
+  // mobile
+  var fm=document.getElementById('chat-feed-m');
+  if(fm){fm.innerHTML=chatHTML(discussionEntries,false);}
+  if(feed)feed.scrollTop=feed.scrollHeight;
+  if(fm)fm.scrollTop=fm.scrollHeight;
+}
+function chatHTML(arr,animateNew){
+  var html='';var start=animateNew?Math.max(0,arr.length-3):0;
+  for(var i=0;i<arr.length;i++){
+    var e=arr[i];var from=(e.from||'system').toLowerCase();
+    var cls='chat-msg';
+    if(from==='hermes1')cls+=' hermes1';else if(from==='hermes2')cls+=' hermes2';else cls+=' system';
+    if(animateNew&&i>=start){cls+=' msg-anim';}
+    var tm=e.timestamp||'';
+    html+='<div class="'+cls+'">'+(from!=='system'?'<div class="msg-from">'+esc(from)+'</div>':'')+
+      '<div class="msg-text">'+esc(e.message)+'</div>'+'<div class="msg-time">'+esc(shortT(tm))+'</div></div>';
+  }
+  return html;
+}
+function shortT(iso){if(!iso)return'';var s=String(iso).split('.');var p=s[0]?s[0].replace('T',' '):'';return p.slice(11,19);}
+
+function setDiscussion(arr){discussionEntries=(arr||[]).slice();renderChat(false);}
+function appendDiscussion(entry){
+  if(!entry||!entry.message)return;
+  discussionEntries.push(entry);
+  if(discussionEntries.length>200)discussionEntries=discussionEntries.slice(-100);
+  renderChat(true);
+}
+
+/* ---- updates from server ---- */
+function updateUI(d){
+  if(d.agents){S.agents=d.agents;render();}
+  if(d.tasks){S.tasks=d.tasks;render();}
+  if(d.health){S.health=d.health;render();}
+  if(d.discussion&&Array.isArray(d.discussion)){setDiscussion(d.discussion);}
+  if(d.from&&d.message){appendDiscussion({from:d.from,message:d.message,timestamp:d.timestamp});}
+}
+
+/* ---- load sequence: render -> /api/state -> ws ---- */
+render();
+fetch('/api/state').then(function(r){return r.json();}).then(function(d){
+  if(d&&d.agents)updateUI(d);
+  if(d&&d.discussion)setDiscussion(d.discussion);
+  render();
+}).catch(function(){});
+
+var ws,retry=0;
+function wsC(){
+  var proto=location.protocol==='https:'?'wss://':'ws://';
+  var url=proto+location.hostname+':8765';
+  ws=new WebSocket(url);
+  ws.onopen=function(){retry=0;};
+  ws.onmessage=function(ev){
+    try{var d=JSON.parse(ev.data);}catch(e){return;}
+    if(d.type==='init'&&d.data){updateUI(d.data);}
+    else if(d.type==='tasks_update'){updateUI({tasks:d.data});}
+    else if(d.type==='agent_status'){S.agents=d.data;render();}
+    else if(d.type==='health'){S.health=d.data;render();}
+    else if(d.type==='discussion'){updateUI({from:d.from,message:d.message,timestamp:d.timestamp});}
+  };
+  ws.onclose=function(){setTimeout(wsC,3000);};
+  ws.onerror=function(){ws.close();};
+}
+wsC();
+
+setInterval(function(){
+  var dt=new Date();
+  var c=document.getElementById('clock');
+  if(c)c.textContent=dt.toISOString().slice(11,19)+' UTC';
+},1000);
+</script>
+</body>
+</html>
