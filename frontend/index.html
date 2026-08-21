@@ -7,7 +7,7 @@
 <style>
 :root{
   --bg:#0a0f14; --panel:#11181f; --panel2:#0d141b; --line:#1e2a35;
-  --txt:#c8d3dc; --dim:#5c6b76; --faint:#3a4document;
+  --txt:#c8d3dc; --dim:#5c6b76; --faint:#3a4650;
   --green:#00ff9d; --blue:#3399ff; --red:#ff5470; --amber:#ffb454;
   --mono:'IBM Plex Mono','SF Mono','Fira Code','Menlo','Consolas','DejaVu Sans Mono',monospace;
 }
@@ -78,6 +78,39 @@ body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:13p
 .typing-indicator span:nth-child(3){background:#6b7678;animation-delay:.4s}
 @keyframes typingDot{0%,60%,100%{opacity:.2;transform:scale(.6)}30%{opacity:1;transform:scale(1)}}
 
+.legacy-dashboard{display:flex;flex-direction:column;gap:10px}
+.agent-strip{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.agent-wide{background:#0b0b0b;border:1px solid #2a2a2a;border-left:2px solid var(--green);min-height:72px;padding:9px 12px}.agent-wide.hermes2-wide{border-left-color:var(--blue)}
+.agent-wide .wide-top{display:flex;align-items:center;gap:8px;border-bottom:1px solid #1e1e1e;padding-bottom:7px}.agent-wide .icn{width:22px;height:22px;flex:0 0 22px}.agent-wide .icn svg{width:22px;height:22px}.agent-wide .name{font-size:11px;letter-spacing:1px}.agent-wide .wide-state{margin-left:auto;font-size:8px;color:var(--green)}.agent-wide .wide-state::before{content:'• ';color:var(--green)}.agent-wide .wide-sub{display:flex;gap:12px;color:#545454;font-size:8px;padding-top:7px}.agent-wide .wide-sub span:last-child{margin-left:auto}.agent-wide .wide-tags{display:flex;gap:4px;margin-top:6px}.agent-wide .wide-tags span{border:1px solid #282828;color:#777;font-size:7px;padding:2px 5px}
+.legacy-panel{background:#0b0b0b;border:1px solid #292929;border-radius:0}.legacy-panel .panel-head{background:#0b0b0b;border-bottom:1px solid #252525;padding:8px 10px;color:#7d7d7d}.legacy-panel .panel-head::before{content:'▌';color:var(--green);margin-right:4px}.legacy-panel .panel-head .stat{color:#777}.legacy-panel .panel-body{padding:9px}.tasks-wide .panel-body{padding:0}.tasks-wide .task-col{border:0;border-right:1px solid #222;border-radius:0;background:#0b0b0b;min-height:240px;max-height:330px;padding:10px}.tasks-wide .task-col:last-child{border-right:0}.tasks-wide .task-col h3{color:#555;padding:2px 5px 8px}.tasks-wide .task-item{border-radius:0;border:1px solid #242424;border-left:2px solid #2c2c2c;background:#0d0d0d;margin-bottom:5px;padding:6px 7px}.tasks-wide .task-item.done{border-left-color:var(--green)}.lower-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.lower-right{display:flex;flex-direction:column;gap:10px}.discussion-panel .discussion-body{min-height:270px;max-height:340px}.system-panel .panel-body{padding:10px}.sys-row{display:grid;grid-template-columns:52px 1fr 52px;align-items:center;gap:8px;font-size:8px;color:#777;margin:8px 0}.sys-row b{font-weight:400;color:#aaa}.sys-bar{height:3px;background:#1e1e1e}.sys-bar i{display:block;height:100%;background:var(--green);width:0}.sys-row:nth-child(2) .sys-bar i{background:var(--green)}.sys-row:nth-child(3) .sys-bar i{background:var(--blue)}.today-panel .today-number{font-size:28px;color:#eee;margin:6px 0}.today-panel .today-meta{display:flex;justify-content:space-between;font-size:8px;color:#666}.today-panel .today-meta b{color:var(--green);font-weight:400}
+.collab-panel{margin-top:0;border-radius:0;background:#0b0b0b}.collab-panel .panel-head{border-radius:0;background:#0b0b0b}.collab-layout{border-top:0}.mesh-metric,.mesh-node,.mesh-activity-feed{border-radius:0}
+@media(max-width:900px){.agent-strip,.lower-grid{grid-template-columns:1fr}.lower-right{display:grid;grid-template-columns:1fr 1fr}.tasks-wide .task-col{min-height:180px}.agent-wide .wide-sub span:last-child{margin-left:0}}
+@media(max-width:640px){body{padding:8px}.lower-right{display:flex}.legacy-dashboard.dsk{display:flex!important}.mob{display:none!important}.tasks-wide .panel-body{grid-template-columns:1fr!important}.tasks-wide .task-col{border-right:0;border-bottom:1px solid #222;min-height:140px;max-height:220px}.tasks-wide .task-col:last-child{border-bottom:0}.legacy-dashboard .mob-combined{display:none!important}.agent-wide .wide-tags{flex-wrap:wrap}.agent-wide .wide-sub{gap:7px;font-size:7px}.collab-panel .panel-head{padding:8px}.mesh-owner{padding-top:10px}}
+
+.collab-layout{display:grid;grid-template-columns:1fr 1.25fr 1fr;gap:10px;padding:10px}
+.mesh-overview,.mesh-activity,.mesh-owner{min-width:0}
+.mesh-status{font-size:9px;letter-spacing:1px;padding:3px 7px;border-radius:3px;background:rgba(255,180,84,.12);color:var(--amber)}
+.mesh-status.connected{background:rgba(0,255,157,.12);color:var(--green)}
+.mesh-status.tampered{background:rgba(255,84,112,.16);color:var(--red);animation:pulse 1s infinite}
+.mesh-metrics{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:8px}
+.mesh-metric{background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:8px}
+.mesh-metric .k{font-size:8px;color:var(--dim);letter-spacing:.5px;text-transform:uppercase}
+.mesh-metric .v{font-size:15px;color:var(--txt);font-weight:700;margin-top:3px}
+.mesh-metric .v.good{color:var(--green)} .mesh-metric .v.bad{color:var(--red)} .mesh-metric .v.warn{color:var(--amber)}
+.mesh-meta{font-size:8px;color:var(--dim);line-height:1.6;word-break:break-all;margin-bottom:8px}
+.mesh-meta b{color:var(--txt);font-weight:400}
+.mesh-nodes{display:flex;flex-direction:column;gap:5px;max-height:105px;overflow-y:auto}
+.mesh-node{border:1px solid var(--line);border-left:2px solid var(--blue);background:var(--panel2);border-radius:4px;padding:6px 8px;font-size:8px}
+.mesh-node.revoked{border-left-color:var(--red);opacity:.75}.mesh-node .node-top{display:flex;justify-content:space-between;color:var(--txt);font-size:9px}.mesh-node .node-detail{color:var(--dim);margin-top:3px}
+.cert-ok{color:var(--green)} .cert-bad{color:var(--red)}
+.mesh-activity-feed{height:180px;overflow-y:auto;border:1px solid var(--line);background:var(--panel2);border-radius:5px;padding:5px}
+.activity-row{display:flex;gap:7px;padding:6px 5px;border-bottom:1px solid rgba(30,42,53,.65);font-size:8px;line-height:1.35}.activity-row:last-child{border-bottom:0}
+.activity-dot{flex:0 0 6px;width:6px;height:6px;margin-top:3px;border-radius:50%;background:var(--blue);box-shadow:0 0 5px currentColor}.activity-row.audit .activity-dot{background:var(--green)}.activity-row.rate_limit .activity-dot{background:var(--amber)}.activity-row.tamper .activity-dot{background:var(--red)}.activity-row.kill_switch .activity-dot{background:var(--red)}
+.activity-main{min-width:0}.activity-main strong{font-weight:500;color:var(--txt)}.activity-main small{display:block;color:var(--dim);font-size:7px;margin-top:2px}
+.mesh-owner{border-left:1px solid var(--line);padding-left:10px}.mesh-owner h3{font-size:9px;color:var(--dim);letter-spacing:.5px;margin-bottom:7px}.mesh-owner input,.mesh-owner select{width:100%;background:#0a1117;border:1px solid var(--line);border-radius:4px;color:var(--txt);font:inherit;font-size:9px;padding:7px;margin-bottom:6px}.mesh-owner button{width:100%;border:1px solid rgba(255,180,84,.45);background:rgba(255,180,84,.08);color:var(--amber);border-radius:4px;padding:7px;font:inherit;font-size:8px;letter-spacing:.6px;cursor:pointer}.mesh-owner button:hover{background:rgba(255,180,84,.16)}.mesh-owner button.danger{border-color:rgba(255,84,112,.6);background:rgba(255,84,112,.1);color:var(--red)}.mesh-owner .hint{color:var(--dim);font-size:7px;line-height:1.45;margin:4px 0 7px}.kill-confirm{border-top:1px solid var(--line);margin-top:8px;padding-top:8px}.kill-confirm[hidden]{display:none}.challenge-phrase{display:block;color:var(--amber);font-size:9px;padding:6px;background:#15140d;border-radius:4px;margin-bottom:6px;word-break:break-all}.mesh-action-status{font-size:8px;min-height:12px;color:var(--dim);margin-top:7px}.mesh-action-status.ok{color:var(--green)}.mesh-action-status.err{color:var(--red)}
+@media(max-width:900px){.collab-layout{grid-template-columns:1fr 1fr}.mesh-owner{grid-column:1/-1;border-left:0;border-top:1px solid var(--line);padding:10px 0 0}.mesh-activity-feed{height:150px}}
+@media(max-width:640px){.collab-layout{grid-template-columns:1fr;padding:8px}.mesh-owner{grid-column:auto}.mesh-activity-feed{height:170px}}
+
 .scrollbar::-webkit-scrollbar{width:3px}
 .scrollbar::-webkit-scrollbar-thumb{background:#334155}
 .mob{display:none}
@@ -95,48 +128,64 @@ body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:13p
 
 <div class="top">
   <span class="dot"></span>
-  <h1>HERMES K2 MONITOR</h1>
+  <h1>HERMES MONITOR <span style="color:#555;font-size:8px;border:1px solid #333;padding:2px 4px;letter-spacing:0">v1.0</span></h1>
   <div class="live" id="clock">--:--:-- UTC</div>
 </div>
 
-<div class="grid dsk">
-  <!-- agents -->
-  <div class="panel">
-    <div class="panel-head">AGENTS <span class="stat" id="tasks-summary-stat">0</span></div>
-    <div class="panel-body">
-      <div class="agent-card"><div class="icn" id="icn-ye"></div>
-        <div class="info"><div class="name ye" id="ye-name">HERMES-1</div>
-          <div class="stat2" id="ye-task">idle</div></div>
-        <span class="badge-status" id="ye-status">online</span></div>
-      <div class="agent-card"><div class="icn" id="icn-me"></div>
-        <div class="info"><div class="name me" id="me-name">HERMES-2</div>
-          <div class="stat2" id="me-task">idle</div></div>
-        <span class="badge-status" id="me-status">online</span></div>
-      <div class="metrics">
-        <div class="metric"><div class="k">CPU</div><div class="v" id="m-cpu">-</div></div>
-        <div class="metric"><div class="k">RAM</div><div class="v" id="m-ram">-</div></div>
-        <div class="metric"><div class="k">DISK</div><div class="v" id="m-disk">-</div></div>
-        <div class="metric"><div class="k">UPTIME</div><div class="v" id="m-up">-</div></div>
-      </div>
-    </div>
+<div class="legacy-dashboard dsk">
+  <div class="agent-strip">
+    <div class="agent-wide"><div class="wide-top"><div class="icn" id="icn-ye"></div><div class="name ye" id="ye-name">HERMES-1</div><span class="wide-state" id="ye-status">online</span></div><div class="wide-sub"><span id="ye-task">idle</span><span>0 tok</span><span>deepseek-chat</span></div><div class="wide-tags"><span>katpathy-coding</span><span>TDD</span><span>systematic-debug</span><span>senior-code-quality</span></div></div>
+    <div class="agent-wide hermes2-wide"><div class="wide-top"><div class="icn" id="icn-me"></div><div class="name me" id="me-name">HERMES-2</div><span class="wide-state" id="me-status">online</span></div><div class="wide-sub"><span id="me-task">idle</span><span>0 tok</span><span>openrouter/free</span></div><div class="wide-tags"><span>cavean-lite</span><span>writing-plans</span><span>senior-code</span><span>script-arch</span></div></div>
   </div>
-
-  <!-- tasks board -->
-  <div class="panel">
-    <div class="panel-head">TASK BOARD <span class="stat" id="tasks-summary">0</span></div>
+  <div class="panel legacy-panel tasks-wide">
+    <div class="panel-head">TASKS <span class="stat" id="tasks-summary">0a / 0p / 0d</span></div>
     <div class="panel-body" id="tasks-body" style="display:grid;grid-template-columns:1fr 1fr 1.3fr">
       <div class="task-col"><h3>PENDING</h3><div id="col-pending"></div></div>
-      <div class="task-col"><h3>WORKING</h3><div id="col-working"></div></div>
+      <div class="task-col"><h3>ACTIVE</h3><div id="col-working"></div></div>
       <div class="task-col"><h3>DONE</h3><div id="col-done"></div></div>
-      <div class="task-col mob-combined" id="col-mobile" style="display:none;grid-column:1/-1;max-height:340px">
-        <h3>ALL TASKS</h3><div id="col-mobile-list"></div></div>
+      <div class="task-col mob-combined" id="col-mobile" style="display:none;grid-column:1/-1;max-height:340px"><h3>ALL TASKS</h3><div id="col-mobile-list"></div></div>
     </div>
   </div>
+  <div class="lower-grid">
+    <div class="panel legacy-panel discussion-panel"><div class="panel-head">DISCUSSION <span class="stat">live</span></div><div class="discussion-body scrollbar" id="discussion-body"><div id="chat-feed"></div></div></div>
+    <div class="lower-right">
+      <div class="panel legacy-panel system-panel"><div class="panel-head">SYSTEM</div><div class="panel-body"><div class="sys-row"><b>CPU</b><div class="sys-bar"><i id="bar-cpu"></i></div><span id="m-cpu">-</span></div><div class="sys-row"><b>RAM</b><div class="sys-bar"><i id="bar-ram"></i></div><span id="m-ram">-</span></div><div class="sys-row"><b>DISK</b><div class="sys-bar"><i id="bar-disk"></i></div><span id="m-disk">-</span></div><div class="sys-row"><b>UP</b><div class="sys-bar"><i id="bar-up"></i></div><span id="m-up">-</span></div></div></div>
+      <div class="panel legacy-panel today-panel"><div class="panel-head">TODAY <span class="stat">DONE</span></div><div class="panel-body"><div class="today-number" id="today-done">0</div><div class="today-meta"><span>Success <b id="today-success">0%</b></span><span>Resp <b id="today-response">0s</b></span></div></div></div>
+    </div>
+  </div>
+</div>
 
-  <!-- discussion -->
-  <div class="panel">
-    <div class="panel-head">AGENT DISCUSSION <span class="stat">live</span></div>
-    <div class="discussion-body scrollbar" id="discussion-body"><div id="chat-feed"></div></div>
+<div class="panel collab-panel" id="collab-panel">
+  <div class="panel-head">COLLAB MESH <span class="mesh-status" id="mesh-status">PARTITIONED</span><span class="stat" id="mesh-live-stat">LIVE</span></div>
+  <div class="collab-layout">
+    <section class="mesh-overview">
+      <div class="mesh-metrics">
+        <div class="mesh-metric"><div class="k">HASH CHAIN</div><div class="v good" id="mesh-audit-status">VERIFIED</div></div>
+        <div class="mesh-metric"><div class="k">AUDIT EVENTS</div><div class="v" id="mesh-audit-count">0</div></div>
+        <div class="mesh-metric"><div class="k">429 EVENTS</div><div class="v warn" id="mesh-429-count">0</div></div>
+        <div class="mesh-metric"><div class="k">NODES</div><div class="v" id="mesh-node-count">0</div></div>
+      </div>
+      <div class="mesh-meta">CA FINGERPRINT<br><b id="mesh-ca-fingerprint">waiting for state</b></div>
+      <div class="mesh-nodes scrollbar" id="mesh-nodes"><div class="mesh-meta">No nodes registered.</div></div>
+    </section>
+    <section class="mesh-activity">
+      <div class="panel-head" style="margin:-10px -10px 8px">AUDIT / RATE ACTIVITY <span class="stat" id="mesh-activity-count">0</span></div>
+      <div class="mesh-activity-feed scrollbar" id="mesh-activity-feed"><div class="mesh-meta">Waiting for realtime events...</div></div>
+    </section>
+    <section class="mesh-owner">
+      <h3>OWNER KILL-SWITCH</h3>
+      <input id="mesh-owner-token" type="password" autocomplete="off" placeholder="owner token">
+      <select id="mesh-kill-node"><option value="">select active node</option></select>
+      <div class="hint">Two-step mesh confirmation. A one-time challenge expires after 60 seconds and must match the exact phrase.</div>
+      <button id="mesh-prepare-kill" type="button">PREPARE REVOKE CHALLENGE</button>
+      <div class="kill-confirm" id="mesh-kill-confirm" hidden>
+        <span class="challenge-phrase" id="mesh-kill-phrase">REVOKE ...</span>
+        <input id="mesh-kill-confirmation" type="text" autocomplete="off" placeholder="type exact revoke phrase">
+        <input id="mesh-kill-mesh-confirmation" type="text" autocomplete="off" placeholder="type CONFIRM MESH REVOKE">
+        <button class="danger" id="mesh-confirm-kill" type="button">CONFIRM KILL-SWITCH</button>
+      </div>
+      <div class="mesh-action-status" id="mesh-action-status"></div>
+    </section>
   </div>
 </div>
 
@@ -169,7 +218,7 @@ body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:13p
 
 <script>
 var S={agents:{hermes1:{status:'online',task:null},hermes2:{status:'online',task:null}},
-        tasks:{pending:[],processing:[],done:[]},discussion:[],stats:{}};
+        tasks:{pending:[],processing:[],done:[]},discussion:[],stats:{},collab:{nodes:{},activity:[],telemetry:{}}};
 var discussionEntries=[];
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 
@@ -193,6 +242,10 @@ function render(){
     document.getElementById('m-disk').textContent=(S.health&&S.health.disk_used_gb)?S.health.disk_used_gb+'G':'-';
     var up=S.health&&S.health.uptime?S.health.uptime:0;
     document.getElementById('m-up').textContent=fmtUp(up);
+    setText('bar-cpu', ''); setWidth('bar-cpu', S.health&&S.health.cpu||0);
+    setWidth('bar-ram', S.health&&S.health.ram_total_mb?((S.health.ram_used_mb||0)/S.health.ram_total_mb*100):0);
+    setWidth('bar-disk', S.health&&S.health.disk_total_gb?((S.health.disk_used_gb||0)/S.health.disk_total_gb*100):0);
+    setWidth('bar-up', Math.min(100,up/86400*100));
   }
   if(document.getElementById('ye-task-m')){
     document.getElementById('ye-task-m').textContent=S.agents.hermes1.task||S.agents.hermes1.status;
@@ -205,14 +258,51 @@ function render(){
     document.getElementById('m-ram-m').textContent=(S.health&&S.health.ram_used_mb)?Math.round(S.health.ram_used_mb/1024)+'G':' -';
   }
   renderTasks(S.tasks);
-  var tot=(S.tasks.pending||[]).length+(S.tasks.processing||[]).length+(S.tasks.done||[]).length;
-  if(document.getElementById('tasks-summary'))document.getElementById('tasks-summary').textContent=tot;
+  var pending=(S.tasks.pending||[]).length,active=(S.tasks.processing||[]).length,done=(S.tasks.done||[]).length;
+  if(document.getElementById('tasks-summary'))document.getElementById('tasks-summary').textContent=active+'a / '+pending+'p / '+done+'d';
+  setText('today-done',S.stats&&S.stats.tasks_done_today||done);
+  setText('today-success',((S.stats&&S.stats.success_rate)||0)+'%');
+  setText('today-response',((S.stats&&S.stats.avg_response_s)||0)+'s');
   renderChat();
+  renderCollab();
 }
 function fmtUp(s){if(!s)return'-';var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return(d?d+'d ':'')+h+'h '+m+'m';}
 
+function renderCollab(){
+  var c=S.collab||{}, audit=c.audit||{}, tele=c.telemetry||{}, nodes=c.nodes||{};
+  var status=document.getElementById('mesh-status');
+  var auditStatus=document.getElementById('mesh-audit-status');
+  if(status){var mesh=(c.mesh_status||'PARTITIONED').toUpperCase();status.textContent=mesh;status.className='mesh-status '+(mesh==='CONNECTED'?'connected':'');if(audit.tampered)status.className+=' tampered';}
+  if(auditStatus){auditStatus.textContent=audit.tampered?'TAMPERED':(audit.verified?'VERIFIED':'UNKNOWN');auditStatus.className='v '+(audit.tampered?'bad':audit.verified?'good':'warn');}
+  setText('mesh-audit-count',tele.audit_entries!=null?tele.audit_entries:(audit.entries||0));
+  setText('mesh-429-count',tele.rate_limit_429||0);
+  setText('mesh-node-count',Object.keys(nodes).length);
+  setText('mesh-ca-fingerprint',c.ca_fingerprint?String(c.ca_fingerprint).slice(0,24)+'…':'waiting for state');
+  var nodeEl=document.getElementById('mesh-nodes');
+  var select=document.getElementById('mesh-kill-node');
+  var nodeKeys=Object.keys(nodes);
+  if(nodeEl){nodeEl.innerHTML=nodeKeys.length?nodeKeys.map(function(id){var n=nodes[id]||{},cert=n.certificate||{},revoked=n.status==='revoked'||cert.revoked;return '<div class="mesh-node '+(revoked?'revoked':'')+'"><div class="node-top"><span>'+esc(id)+'</span><span class="'+(cert.valid&&!revoked?'cert-ok':'cert-bad')+'">'+(revoked?'REVOKED':cert.valid?'CERT OK':'CERT BAD')+'</span></div><div class="node-detail">'+esc(n.status||'unknown')+' · expires '+esc(cert.expires_at?shortT(cert.expires_at):'n/a')+' · last seen '+esc(n.last_seen?shortT(n.last_seen):'n/a')+'</div></div>';}).join(''):'<div class="mesh-meta">No nodes registered.</div>';}
+  if(select){var current=select.value;select.innerHTML='<option value="">select active node</option>'+nodeKeys.filter(function(id){return (nodes[id]||{}).status==='active';}).map(function(id){return '<option value="'+esc(id)+'">'+esc(id)+'</option>';}).join('');if(nodeKeys.indexOf(current)>=0)select.value=current;}
+  var feed=document.getElementById('mesh-activity-feed'), activity=c.activity||[];
+  setText('mesh-activity-count',activity.length);
+  if(feed){feed.innerHTML=activity.length?activity.slice(-40).reverse().map(function(item){var kind=item.kind||'event',label=kind==='rate_limit'?'429 RATE LIMIT':kind==='tamper'?'NODE TAMPERING':kind==='kill_switch'?'KILL-SWITCH':kind==='node'?'NODE IDENTITY':'AUDIT';
+var detail=item.op||item.status||item.scope||'';return '<div class="activity-row '+esc(kind)+'"><span class="activity-dot"></span><div class="activity-main"><strong>'+esc(label)+' · '+esc(item.node_id||item.identity||'mesh')+'</strong><small>'+esc(detail)+' · '+esc(shortT(item.timestamp||''))+'</small></div></div>';}).join(''):'<div class="mesh-meta">Waiting for realtime events...</div>';}
+}
+function setText(id,value){var el=document.getElementById(id);if(el)el.textContent=String(value==null?'':value);}
+function setWidth(id,value){var el=document.getElementById(id);if(el)el.style.width=Math.max(0,Math.min(100,Number(value)||0))+'%';}
+function setCollab(c){S.collab=c||S.collab;renderCollab();}
+function appendCollabActivity(item){if(!item)return;S.collab.activity=S.collab.activity||[];S.collab.activity.push(item);if(S.collab.activity.length>120)S.collab.activity=S.collab.activity.slice(-80);renderCollab();}
+function refreshState(){fetch('/api/state').then(function(r){return r.json();}).then(function(d){if(d&&d.agents)updateUI(d);if(d&&d.collab)setCollab(d.collab);}).catch(function(){});}
+
+var killChallenge=null;
+function ownerHeaders(){var token=(document.getElementById('mesh-owner-token')||{}).value||'';return token?{'Content-Type':'application/json','X-Collab-Owner':token}:null;}
+function actionStatus(text,kind){var el=document.getElementById('mesh-action-status');if(el){el.textContent=text;el.className='mesh-action-status '+(kind||'');}}
+function prepareKill(){var headers=ownerHeaders(),node=(document.getElementById('mesh-kill-node')||{}).value||'';if(!headers||!node){actionStatus('owner token and active node required','err');return;}fetch('/api/mesh/revoke/prepare',{method:'POST',headers:headers,body:JSON.stringify({node_id:node})}).then(function(r){return r.json().then(function(d){return {ok:r.ok,data:d};});}).then(function(result){if(!result.ok)throw new Error(result.data.error||'challenge denied');killChallenge=result.data;setText('mesh-kill-phrase',result.data.phrase);document.getElementById('mesh-kill-confirm').hidden=false;actionStatus('challenge issued · expires in '+result.data.expires_in+'s','');}).catch(function(err){actionStatus(err.message,'err');});}
+function confirmKill(){var headers=ownerHeaders(),node=(document.getElementById('mesh-kill-node')||{}).value||'',confirmation=(document.getElementById('mesh-kill-confirmation')||{}).value||'',meshConfirmation=(document.getElementById('mesh-kill-mesh-confirmation')||{}).value||'';if(!headers||!killChallenge){actionStatus('prepare a mesh challenge first','err');return;}fetch('/api/mesh/revoke',{method:'POST',headers:headers,body:JSON.stringify({node_id:node,challenge:killChallenge.challenge,confirmation:confirmation,mesh_confirmation:meshConfirmation})}).then(function(r){return r.json().then(function(d){return {ok:r.ok,data:d};});}).then(function(result){if(!result.ok)throw new Error(result.data.error||result.data.reason||'kill-switch denied');killChallenge=null;document.getElementById('mesh-kill-confirm').hidden=true;actionStatus('node revoked · kill-switch persisted','ok');refreshState();}).catch(function(err){actionStatus(err.message,'err');});}
+var prepareButton=document.getElementById('mesh-prepare-kill'),confirmButton=document.getElementById('mesh-confirm-kill');if(prepareButton)prepareButton.onclick=prepareKill;if(confirmButton)confirmButton.onclick=confirmKill;
+
 function renderTasks(tasks){
-  t=(tasks||{});
+  var t=(tasks||{});
   var cols={pending:'col-pending',working:'col-working',done:'col-done'};
   var maps={pending:[],working:[],done:[]};
   (t.pending||[]).forEach(function(x){maps.pending.push(['pending',x]);});
@@ -271,21 +361,18 @@ function updateUI(d){
   if(d.tasks){S.tasks=d.tasks;render();}
   if(d.health){S.health=d.health;render();}
   if(d.discussion&&Array.isArray(d.discussion)){setDiscussion(d.discussion);}
+  if(d.collab){setCollab(d.collab);}
   if(d.from&&d.message){appendDiscussion({from:d.from,message:d.message,timestamp:d.timestamp});}
 }
 
 /* ---- load sequence: render -> /api/state -> ws ---- */
 render();
-fetch('/api/state').then(function(r){return r.json();}).then(function(d){
-  if(d&&d.agents)updateUI(d);
-  if(d&&d.discussion)setDiscussion(d.discussion);
-  render();
-}).catch(function(){});
+refreshState();
 
 var ws,retry=0;
 function wsC(){
   var proto=location.protocol==='https:'?'wss://':'ws://';
-  var url=proto+location.hostname+':8765';
+  var url=proto+location.host+'/ws';
   ws=new WebSocket(url);
   ws.onopen=function(){retry=0;};
   ws.onmessage=function(ev){
@@ -295,6 +382,8 @@ function wsC(){
     else if(d.type==='agent_status'){S.agents=d.data;render();}
     else if(d.type==='health'){S.health=d.data;render();}
     else if(d.type==='discussion'){updateUI({from:d.from,message:d.message,timestamp:d.timestamp});}
+    else if(d.type==='collab_activity'){appendCollabActivity(d.data);}
+    else if(d.type==='collab_node'){refreshState();}
   };
   ws.onclose=function(){setTimeout(wsC,3000);};
   ws.onerror=function(){ws.close();};
