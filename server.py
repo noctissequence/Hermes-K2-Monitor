@@ -12,8 +12,12 @@ Architecture (from agent-monitor-dashboard skill blueprint):
   - Discussion log ~/hermes-shared/log/live.jsonl
   - System health via psutil every 5s
 """
-import asyncio, datetime, hashlib, json, os, platform, time
+import asyncio, datetime, hashlib, json, os, platform, secrets, time
 from pathlib import Path
+
+from collab.auth import AuthError, MeshAuth
+from collab.trust import TrustManager
+from collab.vault import CollabVault, VaultError
 
 try:
     import websockets
@@ -42,6 +46,7 @@ TASKS = SHARED / "tasks"
 PENDING, PROCESSING, DONE = TASKS / "pending", TASKS / "processing", TASKS / "done"
 LOG_DIR = SHARED / "log"
 LIVE_JSONL = LOG_DIR / "live.jsonl"
+COLLAB_ROOT = Path(os.environ.get("COLLAB_DIR", str(BASE / "collab"))).expanduser()
 
 WS_PORT = int(os.environ.get("K2_WS_PORT", "8765"))
 HTTP_PORT = int(os.environ.get("K2_HTTP_PORT", "8766"))
@@ -49,6 +54,11 @@ HTTP_PORT = int(os.environ.get("K2_HTTP_PORT", "8766"))
 AGENTS = ("yerin", "merlin")
 for d in (PENDING, PROCESSING, DONE, LOG_DIR):
     d.mkdir(parents=True, exist_ok=True)
+
+# Collab Mesh storage is deliberately separate from the existing local Hermes data.
+collab_vault = CollabVault(COLLAB_ROOT)
+mesh_auth = MeshAuth(collab_vault.auth_dir, collab_vault)
+mesh_trust = TrustManager(mesh_auth.mesh_key, collab_vault.auth_dir)
 
 # ---------------- state ----------------
 state = {
@@ -188,7 +198,7 @@ def snapshot():
     return {"type": "init",
             "data": {"agents": state["agents"], "tasks": state["tasks"],
                      "discussion": state["discussion"], "health": state["health"],
-                     "stats": state["stats"]},
+                     "stats": state["stats"], "collab": _collab_status()},
             "timestamp": now_iso()}
 
 # ---------------- WebSocket (websockets lib :8765) ----------------
@@ -219,6 +229,43 @@ async def ws_server():
                         max_queue=16, max_size=2**20):
         await asyncio.Future()
 
+# ---------------- collab auth / route helpers ----------------
+def _bearer(request):
+    value = request.headers.get("Authorization", "")
+    if value.lower().startswith("bearer "):
+        return value[7:].strip()
+    return request.headers.get("X-Mesh-Token")
+
+
+def _owner_authorized(request):
+    return mesh_auth.verify_owner(request.headers.get("X-Collab-Owner") or _bearer(request))
+
+
+def _node_authorized(request):
+    return mesh_auth.verify_token(_bearer(request))
+
+
+def _collab_status(snapshot_data=None):
+    data = snapshot_data or collab_vault.collab_state()
+    active = [node for node in data.get("nodes", {}).values() if node.get("status") == "active"]
+    data["mesh_status"] = "CONNECTED" if active else "PARTITIONED"
+    return data
+
+
+async def _json_body(request):
+    try:
+        data = await request.json()
+    except (json.JSONDecodeError, ValueError, TypeError):
+        raise web.HTTPBadRequest(text=json.dumps({"error": "invalid JSON"}), content_type="application/json")
+    if not isinstance(data, dict):
+        raise web.HTTPBadRequest(text=json.dumps({"error": "JSON object required"}), content_type="application/json")
+    return data
+
+
+def _forbidden(reason="forbidden"):
+    return web.json_response({"error": reason}, status=403)
+
+
 # ---------------- aiohttp app (:8766) ----------------
 def make_app():
     app = web.Application(client_max_size=2**20)
@@ -233,7 +280,144 @@ def make_app():
         scan_tasks(); update_agents()
         return web.json_response({"agents": state["agents"], "tasks": state["tasks"],
                                   "discussion": state["discussion"],
-                                  "health": state["health"], "stats": state["stats"]})
+                                  "health": state["health"], "stats": state["stats"],
+                                  "collab": _collab_status()})
+
+    async def api_invite(request):
+        if not _owner_authorized(request):
+            return _forbidden()
+        body = await _json_body(request)
+        node_id = body.get("node_id") or ("n" + secrets.token_hex(3))
+        try:
+            result = mesh_auth.create_invite(node_id=node_id, ttl=body.get("ttl", 300))
+        except AuthError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        return web.json_response(result)
+
+    async def api_join(request):
+        body = await _json_body(request)
+        try:
+            result = mesh_auth.join(body.get("node_id"), body.get("conn_code") or body.get("code"), body.get("expires_at"))
+        except AuthError:
+            return _forbidden("invalid or expired code")
+        broadcast({"type": "collab_node", "data": {"node_id": result["node_id"], "status": "active"}, "timestamp": now_iso()})
+        return web.json_response(result)
+
+    async def api_relay(request):
+        node_id = _node_authorized(request)
+        if not node_id:
+            return _forbidden()
+        body = await _json_body(request)
+        valid, reason, signed_node = mesh_trust.verify(body, expected_node_id=node_id)
+        if not valid:
+            return web.json_response({"status": "rejected", "reason": reason}, status=403)
+        try:
+            entry = collab_vault.append_event(signed_node, body["op"], body["payload"], body["sig"])
+        except VaultError as exc:
+            return web.json_response({"status": "rejected", "reason": str(exc)}, status=503)
+        broadcast({"type": "collab_event", "data": entry, "timestamp": entry["ts"]})
+        return web.json_response({"status": "ok", "relayed": True, "ledger_id": entry["id"]})
+
+    async def api_collab_file(request):
+        node_id = _node_authorized(request)
+        if not node_id:
+            return _forbidden()
+        body = await _json_body(request)
+        valid, reason, _ = mesh_trust.verify(body, expected_node_id=node_id)
+        if not valid or body.get("op") != "file_update":
+            return web.json_response({"status": "rejected", "reason": reason if not valid else "operation not allowed"}, status=403)
+        payload = body["payload"]
+        action = payload.get("action", "read")
+        path = payload.get("path")
+        try:
+            if action == "read":
+                return web.json_response({"status": "ok", "path": path, "content": collab_vault.read_file(path)})
+            if action == "write":
+                try:
+                    collab_vault.ensure_audit_clean()
+                except VaultError as exc:
+                    return web.json_response({"status": "rejected", "reason": str(exc)}, status=503)
+                written = collab_vault.write_file(path, payload.get("content", ""))
+                try:
+                    entry = collab_vault.append_event(node_id, "file_update", {"action": "write", "path": written}, body["sig"])
+                except VaultError as exc:
+                    return web.json_response({"status": "rejected", "reason": str(exc)}, status=503)
+                broadcast({"type": "collab_event", "data": entry, "timestamp": entry["ts"]})
+                return web.json_response({"status": "ok", "path": written, "ledger_id": entry["id"]})
+            return web.json_response({"error": "action must be read or write"}, status=400)
+        except VaultError:
+            return _forbidden("forbidden collab path")
+        except FileNotFoundError:
+            return web.json_response({"error": "collab file not found"}, status=404)
+        except UnicodeDecodeError:
+            return web.json_response({"error": "collab file is not UTF-8"}, status=415)
+
+    async def api_collab_task(request):
+        node_id = _node_authorized(request)
+        if not node_id:
+            return _forbidden()
+        body = await _json_body(request)
+        valid, reason, _ = mesh_trust.verify(body, expected_node_id=node_id)
+        if not valid or body.get("op") != "task":
+            return web.json_response({"status": "rejected", "reason": reason if not valid else "operation not allowed"}, status=403)
+        payload = body["payload"]
+        action = payload.get("action", "create")
+        task = payload.get("task") if isinstance(payload.get("task"), dict) else {key: value for key, value in payload.items() if key != "action"}
+        if action == "claim":
+            task["status"] = "processing"
+            task["claimed_by"] = node_id
+        elif action in {"complete", "done"}:
+            task["status"] = "done"
+            task["completed_by"] = node_id
+        try:
+            collab_vault.ensure_audit_clean()
+        except VaultError as exc:
+            return web.json_response({"status": "rejected", "reason": str(exc)}, status=503)
+        try:
+            saved = collab_vault.upsert_task(task)
+        except VaultError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        try:
+            entry = collab_vault.append_event(node_id, "task", {"action": action, "task": saved}, body["sig"])
+        except VaultError as exc:
+            return web.json_response({"status": "rejected", "reason": str(exc)}, status=503)
+        broadcast({"type": "collab_event", "data": entry, "timestamp": entry["ts"]})
+        return web.json_response({"status": "ok", "task": saved, "ledger_id": entry["id"]})
+
+    async def api_collab_ledger(request):
+        node_id = _node_authorized(request)
+        if not node_id:
+            return _forbidden()
+        try:
+            limit = int(request.query.get("limit", "100"))
+        except ValueError:
+            limit = 100
+        try:
+            limit = max(1, min(limit, 500))
+        except (TypeError, ValueError):
+            limit = 100
+        nonce = request.query.get("nonce")
+        ts = request.query.get("ts")
+        sig = request.query.get("sig")
+        if not nonce or not ts or not sig:
+            return _forbidden("signed request required")
+        signed = {"node_id": node_id, "op": "broadcast", "payload": {"action": "ledger_read", "limit": limit}, "nonce": nonce, "ts": ts, "sig": sig}
+        valid, reason, _ = mesh_trust.verify(signed, expected_node_id=node_id)
+        if not valid:
+            return web.json_response({"status": "rejected", "reason": reason}, status=403)
+        return web.json_response({"ledger": collab_vault.read_ledger(limit), "state": _collab_status()})
+
+    async def api_mesh_revoke(request):
+        if not _owner_authorized(request):
+            return _forbidden()
+        body = await _json_body(request)
+        node_id = body.get("node_id")
+        if not isinstance(node_id, str):
+            return web.json_response({"error": "node_id required"}, status=400)
+        if not mesh_auth.revoke_node(node_id):
+            return web.json_response({"error": "node not found"}, status=404)
+        broadcast({"type": "collab_node", "data": {"node_id": node_id, "status": "revoked"}, "timestamp": now_iso()})
+        return web.json_response({"status": "ok", "revoked": node_id})
 
     async def aio_ws(request):
         ws = web.WebSocketResponse(autoping=True)
@@ -257,6 +441,13 @@ def make_app():
     app.router.add_get("/", index)
     app.router.add_get("/index.html", index)
     app.router.add_get("/api/state", api_state)
+    app.router.add_post("/api/auth/invite", api_invite)
+    app.router.add_post("/api/auth/join", api_join)
+    app.router.add_post("/api/relay", api_relay)
+    app.router.add_post("/api/collab/file", api_collab_file)
+    app.router.add_post("/api/collab/task", api_collab_task)
+    app.router.add_get("/api/collab/ledger", api_collab_ledger)
+    app.router.add_post("/api/mesh/revoke", api_mesh_revoke)
     app.router.add_get("/ws", aio_ws)
     return app
 

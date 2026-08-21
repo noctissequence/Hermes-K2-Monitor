@@ -1,3 +1,12 @@
 __pycache__/
 *.pyc
 alive.jsonl
+
+# Collab Mesh runtime state and secrets
+collab/.auth/*
+!collab/.auth/.gitkeep
+collab/ledger.jsonl
+collab/state.json
+collab/tasks/*/*.json
+collab/mirror/*
+!collab/mirror/.gitkeep
