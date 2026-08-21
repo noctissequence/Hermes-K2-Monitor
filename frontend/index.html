@@ -239,9 +239,10 @@ var S={agents:{hermes1:{status:'online',task:null},hermes2:{status:'online',task
         tasks:{pending:[],processing:[],done:[]},discussion:[],stats:{},collab:{nodes:{},activity:[],telemetry:{}},security:{},shared_tasks:{pending:[],processing:[],done:[]}};
 // Viewer token from ?token= (used when served behind a tunnel with K2_VIEW_TOKEN).
 var VIEW_TOKEN=(new URLSearchParams(location.search)).get('token')||'';
-var WRITE_TOKEN=(new URLSearchParams(location.search)).get('wt')||'';
+// Write credential is supplied via writeHeaders() (X-Write-Token or owner header),
+// never as a query param — keeps tokens out of URLs/log/browser history.
+var WRITE_TOKEN='';
 function authQuery(u){return VIEW_TOKEN?(u+(u.indexOf('?')>=0?'&':'?')+'token='+encodeURIComponent(VIEW_TOKEN)):u;}
-function writeQuery(u){var t=WRITE_TOKEN||VIEW_TOKEN;return t?(u+(u.indexOf('?')>=0?'&':'?')+'wt='+encodeURIComponent(t)):u;}
 var discussionEntries=[];
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 
@@ -307,7 +308,7 @@ function renderShared(){
 }
 function exportTask(id){
   if(!id)return;
-  fetch(writeQuery('/api/collab/export'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:id})})
+  fetch('/api/collab/export',{method:'POST',headers:writeHeaders(),body:JSON.stringify({task_id:id})})
     .then(function(r){return r.json().then(function(d){return {ok:r.ok,data:d};});})
     .then(function(result){if(!result.ok)throw new Error(result.data.error||result.data.reason||'export failed');notify('TASK PUSHED TO SHARED · '+id,'good');refreshState();})
     .catch(function(err){notify(err.message,'bad');});
@@ -315,7 +316,7 @@ function exportTask(id){
 
 function adoptTask(id){
   if(!id)return;
-  fetch(writeQuery('/api/collab/adopt'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:id})})
+  fetch('/api/collab/adopt',{method:'POST',headers:writeHeaders(),body:JSON.stringify({task_id:id})})
     .then(function(r){return r.json();})
     .then(function(d){if(d&&d.status==='ok'){refreshState();}else{}})
     .catch(function(){});
@@ -367,6 +368,12 @@ function notify(text,kind){var el=document.getElementById('alert-banner');if(!el
 
 var killChallenge=null;
 function ownerHeaders(){var token=(document.getElementById('mesh-owner-token')||{}).value||'';return token?{'Content-Type':'application/json','X-Collab-Owner':token}:null;}
+function writeHeaders(){
+  if(WRITE_TOKEN)return {'Content-Type':'application/json','X-Write-Token':WRITE_TOKEN};
+  var owner=(document.getElementById('mesh-owner-token')||{}).value||'';
+  if(owner)return {'Content-Type':'application/json','X-Collab-Owner':owner};
+  return {'Content-Type':'application/json'};
+}
 function actionStatus(text,kind){var el=document.getElementById('mesh-action-status');if(el){el.textContent=text;el.className='mesh-action-status '+(kind||'');}}
 function prepareKill(){var headers=ownerHeaders(),node=(document.getElementById('mesh-kill-node')||{}).value||'';if(!headers||!node){actionStatus('owner token and active node required','err');return;}fetch('/api/mesh/revoke/prepare',{method:'POST',headers:headers,body:JSON.stringify({node_id:node})}).then(function(r){return r.json().then(function(d){return {ok:r.ok,data:d};});}).then(function(result){if(!result.ok)throw new Error(result.data.error||'challenge denied');killChallenge=result.data;setText('mesh-kill-phrase',result.data.phrase);document.getElementById('mesh-kill-confirm').hidden=false;actionStatus('challenge issued · expires in '+result.data.expires_in+'s','');}).catch(function(err){actionStatus(err.message,'err');});}
 function confirmKill(){var headers=ownerHeaders(),node=(document.getElementById('mesh-kill-node')||{}).value||'',confirmation=(document.getElementById('mesh-kill-confirmation')||{}).value||'',meshConfirmation=(document.getElementById('mesh-kill-mesh-confirmation')||{}).value||'';if(!headers||!killChallenge){actionStatus('prepare a mesh challenge first','err');return;}fetch('/api/mesh/revoke',{method:'POST',headers:headers,body:JSON.stringify({node_id:node,challenge:killChallenge.challenge,confirmation:confirmation,mesh_confirmation:meshConfirmation})}).then(function(r){return r.json().then(function(d){return {ok:r.ok,data:d};});}).then(function(result){if(!result.ok)throw new Error(result.data.error||result.data.reason||'kill-switch denied');killChallenge=null;document.getElementById('mesh-kill-confirm').hidden=true;actionStatus('node revoked · kill-switch persisted','ok');refreshState();}).catch(function(err){actionStatus(err.message,'err');});}
