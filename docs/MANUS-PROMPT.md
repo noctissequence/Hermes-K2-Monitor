@@ -4,7 +4,7 @@ Goal: Extend Hermes K2 Monitor (aiohttp+websockets+vanilla HTML dashboard) into 
 
 ## HARD RULES (violating these = rework from zero, punishable)
 
-1. **DO NOT redesign the existing UI/UX.** The dark cyberpunk terminal dashboard (`.panel`, `agent-card` Yerin diamond + Merlin hexagon, `task-col` PENDING/WORKING/DONE, `discussion-body`, `.dsk`/`.mob` toggle, metrics, clock) is KEPT 100%. You only ADD new panels/divs and REVISE elements that don't fit. Never delete or re-layout existing structure.
+1. **DO NOT redesign the existing UI/UX.** The dark cyberpunk terminal dashboard (`.panel`, `agent-card` HERMES-1 diamond + HERMES-2 hexagon, `task-col` PENDING/WORKING/DONE, `discussion-body`, `.dsk`/`.mob` toggle, metrics, clock) is KEPT 100%. You only ADD new panels/divs and REVISE elements that don't fit. Never delete or re-layout existing structure.
 2. Zero external CDN. Zero emoji (inline SVG only). System font stack. Mobile via `.dsk`/`.mob`.
 3. Existing files stay: `server.py` (aiohttp :8766 + websockets :8765) + `frontend/index.html`. Add modules, don't move/rename.
 4. Security first, in this order: (1) isolation/no-intel, (2) anonymity, (3) trust/no-breach, (4) shared-file, (5) join-code.
@@ -15,7 +15,7 @@ Goal: Extend Hermes K2 Monitor (aiohttp+websockets+vanilla HTML dashboard) into 
 - **Join handshake** (`/api/auth/invite` + `/api/auth/join`): owner generates join-code with TTL (default 300s, single-use, encrypted store), node presents code to join. Wrong/expired = `403`. After join → rotating token.
 - **Trust/message signing**: every relay message `{node_id, op, payload, nonce, ts, sig}` with `sig = HMAC_SHA256`. Verify: ts ±30s, nonce not replayed, sig valid, op in whitelist (ALWAYS deny key/env/personal-path ops).
 - **Anonymity relay** (`/api/relay`): verify signed message → append to ledger → broadcast. Node identity = semi-random `node_id`, no PII in payload.
-- **Collab file API** (`/api/collab/file`): whitelist paths only `collab/{task_id}/`, anything else (`/root/.env`, `../../`, `.hermes`, `keys`) = `403`. Path traversal blocked.
+- **Collab file API** (`/api/collab/file`): whitelist paths only `collab/{task_id}/`, anything else (`~/.env`, `../../`, `~/.hermes`, `keys`) = `403`. Path traversal blocked.
 - **Mesh ops** (`/api/collab/task`, `/api/collab/ledger`, `/api/mesh/revoke`).
 - **Overkill P1**: node identity cert, kill-switch revoke, audit hash-chain (prev_hash per line).
 

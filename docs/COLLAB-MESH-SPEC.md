@@ -8,7 +8,7 @@
 
 ## 0. HARD RULE — UIUX JANGAN DIROMBAK
 
-- Struktur visual existing (dark cyberpunk terminal, panel `agent-card`, `task-col` PENDING/WORKING/DONE, `discussion-body`, `.dsk`/`.mob`, SVG icon Yerin diamond / Merlin hexagon, zero-CDN, mono font stack) **DI•PERTAHANKAN apa adanya**.
+- Struktur visual existing (dark cyberpunk terminal, panel `agent-card`, `task-col` PENDING/WORKING/DONE, `discussion-body`, `.dsk`/`.mob`, SVG icon HERMES-1 diamond / HERMES-2 hexagon, zero-CDN, mono font stack) **DIPERTAHANKAN apa adanya**.
 - Perubahan = **tambah panel/div baru** + **revisi elemen yang kurang sesuai**. Bukan hapus/ganti layout existing.
 - Semua CSS baru ikut `:root` var yang ada (`--bg`, `--green`, `--blue`, `--mono`, dst).
 - **No emoji**, pakai inline SVG (VIEW 24x24, stroke 1.2-1.5).
@@ -47,7 +47,7 @@ VPS-A (hermes1) ── Dashboard-A ──HTTPS/CF-tunnel──► Dashboard-B �
 ## 3. MODUL TAMBAH (dalam server.py / file baru di repo)
 
 ### 3.1 Collab Vault (P4 — shared file)
-- Dir: `/root/hermes-monitor/collab/` (relatif repo, biar ikut git. Atau configurable via env `COLLAB_DIR`).
+- Dir: `<repo>/collab/` (relatif repo, biar ikut git. Atau configurable via env `COLLAB_DIR`).
 - Format **ledger append-only** `collab/ledger.jsonl` — tiap entri:
   ```json
   {"id":"uuid","ts":"ISO","node":"hermes1-a","op":"message|task|join|file_update","payload":{...},"sig":"..."}
@@ -84,7 +84,7 @@ VPS-A (hermes1) ── Dashboard-A ──HTTPS/CF-tunnel──► Dashboard-B �
 ### 3.5 Collab Sandbox / Isolation (P1 — SECURITY)
 - Batasi agent collab TIDAK bisa akses file personal:
   - Akses file collab HANYA via API endpoint (`/api/collab/file`), bukan path langsung di sistem remote.
-  - Endpoint **whitelist path**: hanya izinkan `collab/{task_id}/` — path lain (`/root/.env`, `.hermes`, `config.yaml`, `keys`) = `403 forbidden`.
+  - Endpoint **whitelist path**: hanya izinkan `collab/{task_id}/` — path lain (`~/.env`, `~/.hermes`, `config.yaml`, `keys`) = `403 forbidden`.
   - Simpan **akses scope** di state: collab agent role punya `read/write` cuma di `collab/`, deny else.
 - (Implementasi hard sandbox = namespace/kernel — di scope lanjut. P0 ini: whitelist-path API + deny by default.)
 
@@ -122,7 +122,7 @@ Semua route baru WAJIB HMAC verify (kecuali join invite = dashboard-owner). Auth
 **C. Trust Indicator**:
 - Setiap entry collab ledger di dashboard tampil indikator signature valid/terverifikasi (dot hijau) vs invalid/tampered (dot merah) — langsung visual "no-celah".
 
-**TIDAK DIHAPUS**: PENDING/WORKING/DONE task-col, discussion chat, agent-card Yerin/Merlin, metrics, clock.
+**TIDAK DIHAPUS**: PENDING/WORKING/DONE task-col, discussion chat, agent-card HERMES-1/HERMES-2, metrics, clock.
 
 ---
 
@@ -145,11 +145,11 @@ Semua route baru WAJIB HMAC verify (kecuali join invite = dashboard-owner). Auth
 ## 7. TEST / VERIFY (wajib setelah build)
 
 1. `bash -n` / `python3 -m py_compile` server.py → no error.
-2. Server jalan, `curl /api/state` → `collab` field ada, UI lama masih render (Yerin/Merlin/task/discussion).
+2. Server jalan, `curl /api/state` → `collab` field ada, UI lama masih render (HERMES-1/HERMES-2/task/discussion).
 3. Join handshake: invite → code TTL → join dengan code benar = `200`; code salah/expired = `403`.
 4. Relay: kirim message signed → verify → ledger ada entri baru + broadcast.
 5. Trust: kirim message dengan sig diubah (tamper) → `403 rejected` + audit log mencatat.
-6. Collab file: akses `collab/taskid/x.json` = `200`; akses `/root/.env` atau `../../etx` = `403` (path traversal blocked).
+6. Collab file: akses `collab/taskid/x.json` = `200`; akses `~/.env` atau `../../etx` = `403` (path traversal blocked).
 7. UI: collab panel render, no console error, no CDN external, mobile toggle jalan.
 
 ---

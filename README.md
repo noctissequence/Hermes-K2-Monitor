@@ -1,5 +1,7 @@
 # Hermes K2 Monitor
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Real-time agent + system monitoring dashboard. Pure Python / asyncio, no LLM, self-contained.
 
 Watches agent task state, discussion log, and system health over WebSocket, served as a cyberpunk terminal dashboard.
@@ -142,9 +144,28 @@ Entries persist to `~/hermes-shared/log/live.jsonl` (reset by deleting that file
 
 Override paths with env `HERMES_SHARED`. Ports override with `K2_WS_PORT` / `K2_HTTP_PORT`. The server binds to `127.0.0.1` by default; set `K2_BIND_HOST=0.0.0.0` only behind an explicitly protected firewall/tunnel. Sensitive-route rate limiting uses the cross-process SQLite store under `collab/.auth/rate_limit.sqlite3`; tune it with `K2_RATE_LIMIT` and `K2_RATE_WINDOW_SECONDS`.
 
+## Viewer authentication (data-bearing endpoints)
+
+Every endpoint that returns or mutates agent data — the raw WebSocket (`:8765`), `/ws`, `/api/state`, and `/api/security` — requires viewer authentication before it will serve a snapshot (agents, tasks, discussion, health, mesh certs, CA fingerprint, audit feed).
+
+Two modes:
+
+| Mode | Behavior |
+|------|----------|
+| Loopback-only (default) | No `K2_VIEW_TOKEN` set + binding `127.0.0.1` → requests from loopback are served; anything else is rejected with `403`. This is the safe default and closes the old no-auth gap. |
+| Shared-secret | Set `K2_VIEW_TOKEN`. Then a valid token is required from **any** source: `X-View-Token: <token>` or `Authorization: Bearer <token>` (REST), or `?token=<token>` (browser WebSocket — browsers can't set custom headers on the WS handshake). |
+
+Rationale: if the host is ever exposed (`K2_BIND_HOST=0.0.0.0`) or placed behind a tunnel, an unauthenticated snapshot would leak mesh cert expiry, CA fingerprint, and the audit feed — the same class of exposure as the original Hermes Monitor incident. The shared secret keeps the panel usable behind a proxy while closing that hole.
+
+Serve the frontend behind a tunnel as `https://panel.example/?token=<secret>` — the JS picks the token up from the URL and passes it to `fetch(/api/...)` and the WebSocket automatically.
+
+## Rate limiting behind a proxy
+
+The collab-sensitive routes rate-limit by client. When served behind a trusted proxy / CF tunnel, the socket peer is the proxy IP, so all tunnel clients would share one bucket. Set `K2_TRUST_XFF=1` to take the real client from `X-Forwarded-For`. **Only enable this when the app is genuinely behind a trusted proxy** — directly exposing it with `K2_TRUST_XFF=1` lets clients spoof `X-Forwarded-For` and rotate buckets.
+
 ## Keep-alive (self-heal)
 
-`/root/.hermes/scripts/k2-monitor-keep-alive.sh` — cron every 2 min, restarts server if port 8766 is down. Pidfile `/tmp/k2-monitor.pid`, log `/var/log/k2-monitor.log`.
+Deploy with a script (e.g. `k2-monitor-keep-alive.sh`) on a cron every 2 minutes that restarts the server if port 8766 is down. Pidfile under `/tmp/`, log under `/var/log/`.
 
 ## Frontend design rules
 

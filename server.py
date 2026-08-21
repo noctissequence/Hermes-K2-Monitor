@@ -63,6 +63,15 @@ WS_PORT = int(os.environ.get("K2_WS_PORT", "8765"))
 HTTP_PORT = int(os.environ.get("K2_HTTP_PORT", "8766"))
 BIND_HOST = os.environ.get("K2_BIND_HOST", "127.0.0.1")
 
+# Viewer authentication. All data-bearing endpoints (WS /api/state /api/security)
+# require this shared token via `X-View-Token` header or `?token=` query/WS-param.
+# Empty token (default) => viewer endpoints are REJECTED unless bound to loopback;
+# production behind a tunnel MUST set K2_VIEW_TOKEN and bind 0.0.0.0.
+VIEW_TOKEN = os.environ.get("K2_VIEW_TOKEN", "")
+# Whether to trust X-Forwarded-For for rate limiting identity. Only enable when the
+# app is deliberately served behind a trusted proxy/CF tunnel that sets XFF.
+TRUST_XFF = os.environ.get("K2_TRUST_XFF", "") == "1"
+
 AGENTS = ("hermes1", "hermes2")
 for d in (PENDING, PROCESSING, DONE, LOG_DIR):
     d.mkdir(parents=True, exist_ok=True)
@@ -260,8 +269,25 @@ async def ws_handler(ws):
 async def ws_server():
     if ws_serve is None:
         await asyncio.Future()
+
+    from urllib.parse import urlparse, parse_qs
+
+    async def process_request(path: str, request_headers):
+        # raw WS (:8765) viewer auth via ?token= (browsers can't set custom
+        # headers on WS handshake). No token configured => loopback only,
+        # which is enforced by BIND_HOST anyway.
+        if VIEW_TOKEN:
+            try:
+                qs = parse_qs(urlparse(path).query)
+            except Exception:
+                qs = {}
+            token = (qs.get("token") or [""])[0]
+            if not secrets.compare_digest(token, VIEW_TOKEN):
+                from aiohttp import web as _web
+                return _web.Response(status=403, text="viewer auth required")
+
     async with ws_serve(ws_handler, BIND_HOST, WS_PORT, ping_interval=None,
-                        max_queue=16, max_size=2**20):
+                        max_queue=16, max_size=2**20, process_request=process_request):
         await asyncio.Future()
 
 # ---------------- collab auth / route helpers ----------------
@@ -278,6 +304,50 @@ def _owner_authorized(request):
 
 def _node_authorized(request):
     return mesh_auth.verify_token(_bearer(request))
+
+
+def _client_ip(request):
+    """Best-effort client IP for rate limiting.
+
+    Behind a trusted proxy/CF tunnel the real client is in X-Forwarded-For;
+    otherwise fall back to the socket peer. XFF is only honoured when
+    K2_TRUST_XFF=1 to prevent spoofing when talking directly to clients.
+    """
+    if TRUST_XFF:
+        xff = request.headers.get("X-Forwarded-For", "")
+        if xff:
+            first = xff.split(",")[0].strip()
+            if first:
+                return first
+    return request.remote or "unknown"
+
+
+def _view_authorized(request):
+    """Viewer endpoints: shared-secret via `X-View-Token` / Bearer / `?token=`.
+
+    Returns True if the client proves knowledge of K2_VIEW_TOKEN. If no token is
+    configured (K2_VIEW_TOKEN empty), the endpoint is only reachable on loopback.
+    """
+    if VIEW_TOKEN:
+        supplied = request.headers.get("X-View-Token") or _bearer(request)
+        return secrets.compare_digest(supplied or "", VIEW_TOKEN)
+    return False
+
+
+def _loopback_only(request):
+    """Whether the request came from a loopback source (safe no-token fallback)."""
+    peer = request.remote
+    return peer in ("127.0.0.1", "::1", "localhost") or (peer or "").startswith("127.")
+
+
+def _view_allowed(request):
+    """True if a viewer endpoint may serve this request (auth-token OR loopback)."""
+    if _view_authorized(request):
+        return True
+    # No token configured: unsafe to serve data-bearing endpoints off-loopback.
+    if not VIEW_TOKEN:
+        return _loopback_only(request)
+    return False
 
 
 def _record_collab_activity(kind: str, **data):
@@ -394,8 +464,8 @@ def _forbidden(reason="forbidden"):
 
 
 def _rate_limit(request, scope: str, identity: str | None = None):
-    peer = request.remote or "unknown"
-    bucket = f"{scope}:{identity or peer}"
+    peer = identity or _client_ip(request)
+    bucket = f"{scope}:{peer}"
     decision = rate_limiter.check(bucket)
     if decision.allowed:
         return None
@@ -420,6 +490,8 @@ def make_app():
         return web.Response(text="Hermes K2 Monitor: frontend missing", status=501)
 
     async def api_state(request):
+        if not _view_allowed(request):
+            return _forbidden("viewer auth required")
         scan_tasks(); update_agents()
         return web.json_response({"agents": state["agents"], "tasks": state["tasks"],
                                   "discussion": state["discussion"],
@@ -427,6 +499,8 @@ def make_app():
                                   "collab": _collab_status()})
 
     async def api_security(request):
+        if not _view_allowed(request):
+            return _forbidden("viewer auth required")
         return web.json_response({"security": _sentinel_status()})
 
     async def api_invite(request):
@@ -628,6 +702,11 @@ def make_app():
         return web.json_response({"status": "ok", "revoked": node_id})
 
     async def aio_ws(request):
+        # Viewer auth: accept ?token= (browser WS can't set custom headers).
+        if not _view_authorized(request) and (VIEW_TOKEN and request.query.get("token") != VIEW_TOKEN):
+            # no token path -> loopback only
+            if not (not VIEW_TOKEN and _loopback_only(request)):
+                return web.json_response({"error": "viewer auth required"}, status=403)
         ws = web.WebSocketResponse(autoping=True)
         await ws.prepare(request)
         clients.add(ws)
@@ -640,6 +719,9 @@ def make_app():
                     logger.warning("Ignoring malformed aiohttp websocket message")
                     continue
                 if msg.get("type") == "add_discussion":
+                    # Write path requires explicit view auth (token or loopback).
+                    if not (_view_authorized(request) or (not VIEW_TOKEN and _loopback_only(request))):
+                        continue
                     entry = append_discussion(msg.get("from") or "system",
                                               msg.get("message") or "")
                     broadcast({"type": "discussion", "from": entry["from"],

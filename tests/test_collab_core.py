@@ -186,7 +186,7 @@ class CollabCoreHTTPTests(AioHTTPTestCase):
         self.assertEqual(reason, "stale timestamp")
 
         vault = self.server_module.collab_vault
-        bad_paths = ["../../.env", "/root/.env", "~/.ssh/id_rsa", "collab/task/../escape", "collab\\task\\..\\escape", "collab/.auth/secret", "collab/task/" + chr(0)]
+        bad_paths = ["../../.env", "~/.env", "~/.ssh/id_rsa", "collab/task/../escape", "collab\\task\\..\\escape", "collab/.auth/secret", "collab/task/" + chr(0)]
         for bad_path in bad_paths:
             with self.assertRaises(VaultError):
                 vault.safe_path(bad_path)

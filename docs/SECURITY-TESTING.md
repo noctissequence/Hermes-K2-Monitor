@@ -59,7 +59,7 @@ Payload berikut harus ditolak sebelum dikirim ke relay:
 {"api_key": "do-not-send"}
 {"email": "person@example.invalid"}
 {"internal_ip": "10.0.0.1"}
-{"path": "/root/.env"}
+{"path": "~/.env"}
 ```
 
 Timestamp envelope lebih tua dari 30 detik juga harus ditolak sebagai `stale timestamp`.
