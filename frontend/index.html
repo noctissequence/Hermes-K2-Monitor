@@ -189,6 +189,21 @@ body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:13p
   </div>
 </div>
 
+<div class="panel collab-panel" id="security-panel">
+  <div class="panel-head">SECURITY <span class="mesh-status" id="sec-status">CLEAN</span><span class="stat" id="sec-watchdog">watchdog</span></div>
+  <div class="collab-layout">
+    <section class="mesh-overview">
+      <div class="mesh-metrics">
+        <div class="mesh-metric"><div class="k">FINDINGS</div><div class="v good" id="sec-findings-count">0</div></div>
+        <div class="mesh-metric"><div class="k">WATCHDOG</div><div class="v good" id="sec-watchdog-state">ACTIVE</div></div>
+        <div class="mesh-metric"><div class="k">LAST RUN</div><div class="v" id="sec-last-run">-</div></div>
+        <div class="mesh-metric"><div class="k">UPTIME</div><div class="v" id="sec-uptime">-</div></div>
+      </div>
+      <div class="mesh-nodes scrollbar" id="sec-findings-list"><div class="mesh-meta">No findings — security posture clean.</div></div>
+    </section>
+  </div>
+</div>
+
 <div class="mob">
   <div class="panel" style="margin-bottom:10px">
     <div class="panel-head">AGENTS</div>
@@ -218,7 +233,7 @@ body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:13p
 
 <script>
 var S={agents:{hermes1:{status:'online',task:null},hermes2:{status:'online',task:null}},
-        tasks:{pending:[],processing:[],done:[]},discussion:[],stats:{},collab:{nodes:{},activity:[],telemetry:{}}};
+        tasks:{pending:[],processing:[],done:[]},discussion:[],stats:{},collab:{nodes:{},activity:[],telemetry:{}},security:{}};
 var discussionEntries=[];
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 
@@ -294,6 +309,21 @@ function setCollab(c){S.collab=c||S.collab;renderCollab();}
 function appendCollabActivity(item){if(!item)return;S.collab.activity=S.collab.activity||[];S.collab.activity.push(item);if(S.collab.activity.length>120)S.collab.activity=S.collab.activity.slice(-80);renderCollab();}
 function refreshState(){fetch('/api/state').then(function(r){return r.json();}).then(function(d){if(d&&d.agents)updateUI(d);if(d&&d.collab)setCollab(d.collab);}).catch(function(){});}
 
+function renderSecurity(){
+  var s=S.security||{};
+  var st=(s.status||'clean').toUpperCase();
+  var badge=document.getElementById('sec-status');
+  if(badge){badge.textContent=st;badge.className='mesh-status '+(st==='CLEAN'?'connected':'tampered');}
+  setText('sec-findings-count',s.findings_count||0);
+  var wd=document.getElementById('sec-watchdog-state');
+  if(wd){var w=(s.agent_watchdog||'unknown').toUpperCase();wd.textContent=w;wd.className='v '+(w==='ACTIVE'?'good':(w==='unknown'?'warn':'bad'));}
+  setText('sec-last-run',s.last_run_ago_sec!=null?(Math.round(s.last_run_ago_sec)+'s ago'):'-');
+  setText('sec-uptime',s.uptime_min!=null?(Math.min(9999,Math.round(s.uptime_min))+'m'):'-');
+  var list=document.getElementById('sec-findings-list');
+  if(list){list.innerHTML=(s.findings&&s.findings.length)?s.findings.map(function(f){return '<div class="mesh-node"><div class="node-top"><span>'+esc((f.type||'finding').toUpperCase())+'</span><span class="cert-bad">'+esc((f.severity||'info').toUpperCase())+'</span></div><div class="node-detail">flagged by security watchdog</div></div>';}).join(''):'<div class="mesh-meta">No findings — security posture clean.</div>';}
+}
+function refreshSecurity(){fetch('/api/security').then(function(r){return r.json();}).then(function(d){if(d&&d.security){S.security=d.security;renderSecurity();}}).catch(function(){});}
+
 var killChallenge=null;
 function ownerHeaders(){var token=(document.getElementById('mesh-owner-token')||{}).value||'';return token?{'Content-Type':'application/json','X-Collab-Owner':token}:null;}
 function actionStatus(text,kind){var el=document.getElementById('mesh-action-status');if(el){el.textContent=text;el.className='mesh-action-status '+(kind||'');}}
@@ -368,6 +398,7 @@ function updateUI(d){
 /* ---- load sequence: render -> /api/state -> ws ---- */
 render();
 refreshState();
+refreshSecurity();
 
 var ws,retry=0;
 function wsC(){
@@ -395,6 +426,7 @@ setInterval(function(){
   var c=document.getElementById('clock');
   if(c)c.textContent=dt.toISOString().slice(11,19)+' UTC';
 },1000);
+setInterval(function(){ refreshSecurity(); },15000);
 </script>
 </body>
 </html>

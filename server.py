@@ -331,6 +331,54 @@ def _collab_status(snapshot_data=None):
     return data
 
 
+def _sentinel_status():
+    """Aggregate security posture read from the local Sentinel Guard state.
+
+    Deliberately REDACTING absolute paths / infra details that the dashboard
+    exposes publicly: only status, counts, and sanitized finding types are
+    returned. Nothing about the underlying host is leaked to the UI.
+    """
+    # NOTE: defaults are generic placeholders (no host-specific infra paths).
+    # Deployments override via SENTINEL_LOG / SENTINEL_STATE env at runtime so
+    # absolute server paths never appear in this public codebase.
+    log_path = Path(os.environ.get("SENTINEL_LOG", "/var/log/service-watch.log"))
+    state_dir = Path(os.environ.get("SENTINEL_STATE", "/var/tmp/service-watch"))
+    findings_path = state_dir / "hunter_state" / "findings.txt"
+
+    last_mtime = 0.0
+    try:
+        last_mtime = log_path.stat().st_mtime
+    except OSError:
+        last_mtime = 0.0
+
+    now = time.time()
+    last_run_ago = round(now - last_mtime, 1) if last_mtime else None
+    uptime_min = round((now - last_mtime) / 60, 1) if last_mtime else None
+
+    findings = []
+    try:
+        text = findings_path.read_text(encoding="utf-8", errors="ignore")
+        for line in text.strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("|")
+            if len(parts) >= 2:
+                findings.append({"type": parts[0], "severity": parts[1]})
+    except OSError:
+        pass
+
+    status = "clean" if not findings else "attention"
+    return {
+        "status": status,
+        "findings_count": len(findings),
+        "findings": findings,
+        "last_run_ago_sec": last_run_ago,
+        "uptime_min": uptime_min,
+        "agent_watchdog": "active" if last_mtime else "unknown",
+    }
+
+
 async def _json_body(request):
     try:
         data = await request.json()
@@ -377,6 +425,9 @@ def make_app():
                                   "discussion": state["discussion"],
                                   "health": state["health"], "stats": state["stats"],
                                   "collab": _collab_status()})
+
+    async def api_security(request):
+        return web.json_response({"security": _sentinel_status()})
 
     async def api_invite(request):
         limited = _rate_limit(request, "auth-invite")
@@ -603,6 +654,7 @@ def make_app():
     app.router.add_get("/", index)
     app.router.add_get("/index.html", index)
     app.router.add_get("/api/state", api_state)
+    app.router.add_get("/api/security", api_security)
     app.router.add_post("/api/auth/invite", api_invite)
     app.router.add_post("/api/auth/join", api_join)
     app.router.add_post("/api/relay", api_relay)
