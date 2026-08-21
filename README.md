@@ -80,6 +80,9 @@ Alur setup 2 VPS:
 4. Expose `/api/relay` tiap VPS via CF tunnel (jangan raw IP — anonim).
 5. Event lokal otomatis forward → partner verify → diterima di ledger partner.
 
+> **Panduan lengkap langkah-demi-langkah (untuk VPS kedua / teman)**: lihat [`docs/SETUP-MESH.md`](docs/SETUP-MESH.md). Onboarding 1-command via `scripts/setup-mesh-peer.sh`; verifikasi status mesh via `scripts/cek-mesh-status.sh`.
+
+
 Run the backend security regression suite with:
 
 ```bash
