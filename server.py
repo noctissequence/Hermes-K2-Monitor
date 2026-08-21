@@ -329,7 +329,9 @@ def _view_authorized(request):
     configured (K2_VIEW_TOKEN empty), the endpoint is only reachable on loopback.
     """
     if VIEW_TOKEN:
-        supplied = request.headers.get("X-View-Token") or _bearer(request)
+        supplied = (request.headers.get("X-View-Token")
+                    or request.query.get("token")
+                    or _bearer(request))
         return secrets.compare_digest(supplied or "", VIEW_TOKEN)
     return False
 
@@ -703,10 +705,9 @@ def make_app():
 
     async def aio_ws(request):
         # Viewer auth: accept ?token= (browser WS can't set custom headers).
-        if not _view_authorized(request) and (VIEW_TOKEN and request.query.get("token") != VIEW_TOKEN):
-            # no token path -> loopback only
-            if not (not VIEW_TOKEN and _loopback_only(request)):
-                return web.json_response({"error": "viewer auth required"}, status=403)
+        # _view_allowed() handles the no-token -> loopback-only fallback.
+        if not _view_allowed(request):
+            return web.json_response({"error": "viewer auth required"}, status=403)
         ws = web.WebSocketResponse(autoping=True)
         await ws.prepare(request)
         clients.add(ws)
@@ -720,7 +721,7 @@ def make_app():
                     continue
                 if msg.get("type") == "add_discussion":
                     # Write path requires explicit view auth (token or loopback).
-                    if not (_view_authorized(request) or (not VIEW_TOKEN and _loopback_only(request))):
+                    if not _view_allowed(request):
                         continue
                     entry = append_discussion(msg.get("from") or "system",
                                               msg.get("message") or "")
