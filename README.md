@@ -53,6 +53,31 @@ The following new routes are available. Owner-only routes require `X-Collab-Owne
 | POST | `/api/mesh/revoke/prepare` | owner | Issue a one-time 60-second mesh confirmation challenge. |
 | POST | `/api/mesh/revoke` | owner + mesh confirmation | Revoke a node and invalidate its tokens. |
 
+## Cross-VPS relay (Opsi B — partner forwarding)
+
+Setiap event collab yang verified (relay / file-update / task) **diforward best-effort ke partner VPS** supaya ledger ter-replikasi lintas node. Forward re-sign memakai mesh key bersama; `TrustManager` di partner menegakkan nonce/timestamp/HMAC yang sama persis seperti relay lokal.
+
+Konfigurasi (env pada node):
+
+```bash
+# daftar partner, pisah koma
+COLLAB_PARTNER_URLS=https://relay-a.example.com,https://relay-b.example.com
+# identitas lokal yang dipakai buat re-sign + Bearer auth ke partner (wajib terdaftar/<-join di partner)
+COLLAB_LOCAL_NODE_ID=n7f2a9
+COLLAB_LOCAL_NODE_TOKEN=<rotating token node yang udah join ke partner>
+# opsional
+COLLAB_RELAY_TIMEOUT=8
+```
+
+Tanpa `COLLAB_PARTNER_URLS`, `RelayClient` jadi no-op (`ready()=False`) — relay lokal tidak terpengaruh. Per-partner ada circuit breaker (3 gagal → isolasi 60s) dan bounded in-memory retry queue. Partner yang offline tidak menggagalkan relay lokal (best-effort).
+
+Alur setup 2 VPS:
+1. Tiap VPS jalankan server (auth gate aktif di port 8766, bind 127.0.0.1).
+2. Daftarkan node silang: VPS-A `POST /api/auth/invite` → code → VPS-B join (dan sebaliknya). Tiap node dapat rotating token + cert.
+3. Set `COLLAB_PARTNER_URLS` di tiap VPS menunjuk ke URL relay partner (via CF tunnel), serta `COLLAB_LOCAL_NODE_ID`/`TOKEN` = node yang barusan join ke partner.
+4. Expose `/api/relay` tiap VPS via CF tunnel (jangan raw IP — anonim).
+5. Event lokal otomatis forward → partner verify → diterima di ledger partner.
+
 Run the backend security regression suite with:
 
 ```bash

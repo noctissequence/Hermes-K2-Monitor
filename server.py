@@ -24,6 +24,7 @@ from pathlib import Path
 
 from collab.auth import AuthError, MeshAuth
 from collab.ratelimit import SQLiteRateLimiter
+from collab.relay import RelayClient
 from collab.trust import TrustManager
 from collab.vault import CollabVault, VaultError
 
@@ -70,6 +71,16 @@ for d in (PENDING, PROCESSING, DONE, LOG_DIR):
 collab_vault = CollabVault(COLLAB_ROOT)
 mesh_auth = MeshAuth(collab_vault.auth_dir, collab_vault)
 mesh_trust = TrustManager(mesh_auth.mesh_key, collab_vault.auth_dir)
+
+# Cross-VPS relay forwarder. No-op (ready()=False) until
+# COLLAB_PARTNER_URLS is set. Signing reuses the local mesh_key from auth.
+relay_client = RelayClient(
+    mesh_key=mesh_auth.mesh_key,
+    local_node_id=os.environ.get("COLLAB_LOCAL_NODE_ID", "mesh-local"),
+    local_node_token=os.environ.get("COLLAB_LOCAL_NODE_TOKEN", ""),
+    timeout=float(os.environ.get("COLLAB_RELAY_TIMEOUT", "8")),
+    auth_dir=collab_vault.auth_dir,
+)
 rate_limiter = SQLiteRateLimiter(
     collab_vault.auth_dir / "rate_limit.sqlite3",
     limit=int(os.environ.get("K2_RATE_LIMIT", "60")),
@@ -412,6 +423,9 @@ def make_app():
             return web.json_response({"status": "rejected", "reason": str(exc)}, status=503)
         broadcast({"type": "collab_event", "data": entry, "timestamp": entry["ts"]})
         _record_collab_activity("audit", node_id=entry["node"], op=entry["op"], ledger_id=entry["id"], status="verified")
+        # best-effort replicate to partner VPS
+        if relay_client.ready():
+            relay_client.forward(body.get("op", "message"), body.get("payload", {}))
         return web.json_response({"status": "ok", "relayed": True, "ledger_id": entry["id"]})
 
     async def api_collab_file(request):
@@ -446,6 +460,8 @@ def make_app():
                     return web.json_response({"status": "rejected", "reason": str(exc)}, status=503)
                 broadcast({"type": "collab_event", "data": entry, "timestamp": entry["ts"]})
                 _record_collab_activity("audit", node_id=entry["node"], op=entry["op"], ledger_id=entry["id"], status="verified")
+                if relay_client.ready():
+                    relay_client.forward("file_update", {"action": "write", "path": written})
                 return web.json_response({"status": "ok", "path": written, "ledger_id": entry["id"]})
             return web.json_response({"error": "action must be read or write"}, status=400)
         except VaultError:
@@ -492,6 +508,8 @@ def make_app():
             return web.json_response({"status": "rejected", "reason": str(exc)}, status=503)
         broadcast({"type": "collab_event", "data": entry, "timestamp": entry["ts"]})
         _record_collab_activity("audit", node_id=entry["node"], op=entry["op"], ledger_id=entry["id"], status="verified")
+        if relay_client.ready():
+            relay_client.forward("task", {"action": action, "task": saved})
         return web.json_response({"status": "ok", "task": saved, "ledger_id": entry["id"]})
 
     async def api_collab_ledger(request):
