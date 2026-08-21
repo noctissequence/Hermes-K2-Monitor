@@ -16,6 +16,8 @@ body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:13p
 .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-bottom:10px;border-bottom:1px solid var(--line);margin-bottom:12px}
 .top h1{font-size:15px;font-weight:700;letter-spacing:1px;color:var(--green)}
 .top .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 2s infinite}
+.top .dot.disconnected{background:var(--red);box-shadow:0 0 8px var(--red);animation:pulse .8s infinite}
+.top .dot.reconnecting{background:var(--amber);box-shadow:0 0 8px var(--amber)}
 .live{margin-left:auto;font-size:9px;color:var(--dim);letter-spacing:1px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
@@ -127,7 +129,7 @@ body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:13p
 <body>
 
 <div class="top">
-  <span class="dot"></span>
+  <span class="dot" id="ws-dot" title="connecting..."></span>
   <h1>HERMES MONITOR <span style="color:#555;font-size:8px;border:1px solid #333;padding:2px 4px;letter-spacing:0">v1.0</span></h1>
   <div class="live" id="clock">--:--:-- UTC</div>
 </div>
@@ -454,8 +456,13 @@ var ws,retry=0;
 function wsC(){
   var proto=location.protocol==='https:'?'wss://':'ws://';
   var url=authQuery(proto+location.host+'/ws');
+  var dot=document.getElementById('ws-dot');
+  if(dot){dot.className='dot reconnecting';dot.title='connecting...';}
   ws=new WebSocket(url);
-  ws.onopen=function(){retry=0;};
+  ws.onopen=function(){
+    retry=0;
+    if(dot){dot.className='dot';dot.title='connected — live';}
+  };
   ws.onmessage=function(ev){
     try{var d=JSON.parse(ev.data);}catch(e){return;}
     if(d.type==='init'&&d.data){updateUI(d.data);}
@@ -468,7 +475,10 @@ function wsC(){
     else if(d.type==='rate_limit'){notify('RAW WS RATE LIMIT · 429','bad');}
     else if(d.type==='collab_node'){refreshState();}
   };
-  ws.onclose=function(){setTimeout(wsC,3000);};
+  ws.onclose=function(){
+    if(dot){dot.className='dot disconnected';dot.title='disconnected — retrying...';}
+    setTimeout(wsC,3000);
+  };
   ws.onerror=function(){ws.close();};
 }
 wsC();

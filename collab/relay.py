@@ -185,8 +185,6 @@ class RelayClient:
         self._queue.append(message)
 
     def _post_blocking(self, url: str, message: dict[str, Any]) -> bool:
-        if aiohttp is None:
-            raise RelayForwardError("aiohttp not installed")
         import urllib.request
 
         headers = {
