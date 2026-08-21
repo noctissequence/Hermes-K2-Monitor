@@ -336,6 +336,53 @@ class CollabCoreHTTPTests(AioHTTPTestCase):
         self.server_module.mesh_auth.tokens_path.write_bytes(b"not-a-fernet-store")
         self.assertIsNone(self.server_module.mesh_auth.verify_token(credentials["token"]))
 
+    @unittest_run_loop
+    async def test_internal_task_export_to_mesh_and_collab_event(self):
+        local_task = self.server_module.PENDING / "export-me.json"
+        local_task.write_text('{"id":"export-me","title":"Export me","status":"pending"}', encoding="utf-8")
+        socket = await self.client.ws_connect("/ws")
+        initial = await socket.receive_json()
+        self.assertEqual(initial["type"], "init")
+        exported = await self.client.request("POST", "/api/collab/export", json={"task_id": "export-me"})
+        self.assertEqual(exported.status, 200)
+        data = await exported.json()
+        self.assertEqual(data["task"]["id"], "export-me")
+        event = None
+        for _ in range(4):
+            candidate = await socket.receive_json(timeout=1)
+            if candidate.get("type") == "collab_event":
+                event = candidate
+                break
+        self.assertIsNotNone(event)
+        self.assertEqual(event["data"]["op"], "task")
+        state_response = await self.client.request("GET", "/api/state")
+        state = await state_response.json()
+        self.assertIn("export-me", [task["id"] for task in state["shared_tasks"]["pending"]])
+        await socket.close()
+
+    @unittest_run_loop
+    async def test_raw_websocket_rate_limit_returns_event(self):
+        self.server_module.ws_rate_limiter.limit = 1
+        self.server_module.ws_rate_limiter.reset()
+        socket = await self.client.ws_connect("/ws")
+        await socket.receive_json()
+        await socket.send_json({"type": "add_discussion", "from": "system", "message": "first"})
+        await socket.send_json({"type": "add_discussion", "from": "system", "message": "second"})
+        events = [await socket.receive_json(timeout=1) for _ in range(2)]
+        self.assertTrue(any(item.get("type") == "rate_limit" and item.get("status") == 429 for item in events))
+        await socket.close()
+
+    @unittest_run_loop
+    async def test_viewer_access_is_audited(self):
+        state_response = await self.client.request("GET", "/api/state")
+        self.assertEqual(state_response.status, 200)
+        security_response = await self.client.request("GET", "/api/security")
+        self.assertEqual(security_response.status, 200)
+        security = await security_response.json()
+        endpoints = [row["endpoint"] for row in security["security"]["viewer_access"]]
+        self.assertIn("/api/state", endpoints)
+        self.assertIn("/api/security", endpoints)
+
 if __name__ == "__main__":
     unittest.main()
 

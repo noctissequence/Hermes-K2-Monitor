@@ -1,17 +1,12 @@
 """Unit tests for the cross-VPS RelayClient (collab/relay.py)."""
-import asyncio
 import os
 import tempfile
 import unittest
-from pathlib import Path
 
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from collab.relay import RelayClient
-from collab.trust import TrustManager
-from collab.auth import MeshAuth
-from collab.vault import CollabVault
 
 
 class RelayClientTests(unittest.TestCase):
@@ -19,7 +14,7 @@ class RelayClientTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         os.environ["COLLAB_DIR"] = self.tmp.name
         os.environ["MESH_KEY"] = "test-relay-mesh-key-0123456789abcdef"
-        os.environ["COLLAB_OWNER_TOKEN"] = "owner-token"
+        os.environ["COLLAB_OWNER_TOKEN"] = "owner-token"  # nosec B105 - isolated test fixture
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -73,9 +68,8 @@ class RelayForwardHTTPTests(AioHTTPTestCase):
         await site.start()
         port = runner.addresses[0][1]
 
-        tmp = tempfile.mkdtemp()
         rc = RelayClient(partner_urls=[f"http://127.0.0.1:{port}"], mesh_key=b"m" * 32,
-                         local_node_id="n-test", local_node_token="tok", timeout=5)
+                         local_node_id="n-test", local_node_token="tok", timeout=5)  # nosec B106 - isolated test fixture
         self.assertTrue(rc.ready())
         ok = rc.forward("message", {"hello": "world"})
         self.assertTrue(ok)

@@ -13,7 +13,7 @@ python3 -m unittest discover -s tests -p 'test_*.py' -v
 Output sehat harus berakhir dengan pola berikut:
 
 ```text
-Ran 17 tests in ...s
+Ran 25 tests in ...s
 OK
 ```
 
@@ -113,7 +113,7 @@ Dengan demikian test tidak menyentuh `collab/` production di repository. Jangan 
 
 ## 8. Coverage boundary and operational follow-up
 
-The suite covers the security invariants implemented in this phase, including same-origin realtime activity delivery and the two-step owner kill-switch flow, but no finite test suite can prove that every possible attack is impossible.
+The suite covers the security invariants implemented in this phase, including same-origin realtime activity delivery, the two-step owner kill-switch flow, shared-task export and `collab_event` delivery, raw/same-origin WebSocket rate limiting, and viewer access audit persistence, but no finite test suite can prove that every possible attack is impossible.
  The following attack classes remain operational follow-up work rather than silently being reported as covered: sustained flooding beyond the configured local limiter, distributed rate-limit coordination across hosts, webhook replay across a partner link, traffic metadata leakage, CA key compromise, backup/restore tampering, filesystem permission drift under a different service account, and recovery tooling for a deliberately broken audit chain. These require deployment-level tests, load testing, or an explicit recovery runbook. The current implementation fails closed for detected integrity failures; it does not yet provide automatic audit-chain repair or a circuit breaker.
 
 ## 9. Live smoke test

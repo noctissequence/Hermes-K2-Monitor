@@ -95,6 +95,12 @@ rate_limiter = SQLiteRateLimiter(
     limit=int(os.environ.get("K2_RATE_LIMIT", "60")),
     window_seconds=int(os.environ.get("K2_RATE_WINDOW_SECONDS", "60")),
 )
+ws_rate_limiter = SQLiteRateLimiter(
+    collab_vault.auth_dir / "ws_rate_limit.sqlite3",
+    limit=int(os.environ.get("K2_WS_RATE_LIMIT", "120")),
+    window_seconds=int(os.environ.get("K2_WS_RATE_WINDOW_SECONDS", "60")),
+)
+VIEWER_ACCESS_PATH = collab_vault.auth_dir / "viewer_access.jsonl"
 
 # ---------------- state ----------------
 state = {
@@ -237,6 +243,51 @@ async def mock_startup():
     broadcast({"type": "discussion", "from": "system", "message": entry["message"],
                "timestamp": entry["timestamp"]})
 
+def _record_viewer_access(endpoint: str, identity: str, status: int = 200):
+    item = {"timestamp": now_iso(), "endpoint": endpoint, "identity": identity, "status": status}
+    try:
+        with VIEWER_ACCESS_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n")
+    except OSError as exc:
+        logger.warning("Could not persist viewer access audit: %s", exc)
+    return item
+
+
+def _read_viewer_access(limit: int = 50):
+    rows = []
+    try:
+        with VIEWER_ACCESS_PATH.open(encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    try:
+                        item = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(item, dict):
+                        rows.append(item)
+    except OSError:
+        return []
+    return rows[-max(1, min(int(limit), 200)):]
+
+
+def _ws_peer(ws):
+    address = getattr(ws, "remote_address", None)
+    if isinstance(address, tuple) and address:
+        return str(address[0])
+    return str(address or "unknown")
+
+
+def _ws_rate_limited(ws):
+    peer = _ws_peer(ws)
+    decision = ws_rate_limiter.check("ws:" + peer)
+    if decision.allowed:
+        return None
+    collab_telemetry["rate_limit_429"] += 1
+    collab_telemetry["last_rate_limit_429"] = now_iso()
+    _record_collab_activity("rate_limit", scope="ws", identity=peer, status=429, retry_after=decision.retry_after)
+    return {"type": "rate_limit", "status": 429, "retry_after": decision.retry_after}
+
+
 def snapshot():
     return {"type": "init",
             "data": {"agents": state["agents"], "tasks": state["tasks"],
@@ -250,6 +301,10 @@ async def ws_handler(ws):
     try:
         await ws.send(json.dumps(snapshot(), default=str))
         async for raw in ws:
+            limited = _ws_rate_limited(ws)
+            if limited:
+                await ws.send(json.dumps(limited))
+                continue
             try:
                 msg = json.loads(raw)
             except (json.JSONDecodeError, TypeError):
@@ -270,7 +325,7 @@ async def ws_server():
     if ws_serve is None:
         await asyncio.Future()
 
-    from urllib.parse import urlparse, parse_qs
+    from urllib.parse import parse_qs, urlparse
 
     async def process_request(path: str, request_headers):
         # raw WS (:8765) viewer auth via ?token= (browsers can't set custom
@@ -279,7 +334,7 @@ async def ws_server():
         if VIEW_TOKEN:
             try:
                 qs = parse_qs(urlparse(path).query)
-            except Exception:
+            except (TypeError, ValueError):
                 qs = {}
             token = (qs.get("token") or [""])[0]
             if not secrets.compare_digest(token, VIEW_TOKEN):
@@ -414,7 +469,7 @@ def _sentinel_status():
     # Deployments override via SENTINEL_LOG / SENTINEL_STATE env at runtime so
     # absolute server paths never appear in this public codebase.
     log_path = Path(os.environ.get("SENTINEL_LOG", "/var/log/service-watch.log"))
-    state_dir = Path(os.environ.get("SENTINEL_STATE", "/var/tmp/service-watch"))
+    state_dir = Path(os.environ.get("SENTINEL_STATE", "service-watch"))
     findings_path = state_dir / "hunter_state" / "findings.txt"
 
     last_mtime = 0.0
@@ -494,12 +549,13 @@ def make_app():
     async def api_state(request):
         if not _view_allowed(request):
             return _forbidden("viewer auth required")
+        _record_viewer_access("/api/state", _client_ip(request))
         scan_tasks(); update_agents()
         shared = {}
         try:
             cs = collab_vault.collab_state()
             shared = cs.get("tasks", {}) if isinstance(cs, dict) else {}
-        except Exception:
+        except (OSError, TypeError, ValueError):
             shared = {}
         return web.json_response({"agents": state["agents"], "tasks": state["tasks"],
                                   "discussion": state["discussion"],
@@ -509,7 +565,10 @@ def make_app():
     async def api_security(request):
         if not _view_allowed(request):
             return _forbidden("viewer auth required")
-        return web.json_response({"security": _sentinel_status()})
+        _record_viewer_access("/api/security", _client_ip(request))
+        security = _sentinel_status()
+        security["viewer_access"] = _read_viewer_access()
+        return web.json_response({"security": security})
 
     async def api_invite(request):
         limited = _rate_limit(request, "auth-invite")
@@ -664,7 +723,7 @@ def make_app():
                         break
                 if found:
                     break
-        except Exception:
+        except (OSError, TypeError, ValueError):
             return web.json_response({"error": "vault read failed"}, status=503)
         if not found:
             return web.json_response({"error": "task not found"}, status=404)
@@ -674,6 +733,40 @@ def make_app():
         scan_tasks(); update_agents()
         broadcast({"type": "tasks_update", "data": state["tasks"]})
         return web.json_response({"status": "ok", "task": found, "path": str(target.name)})
+
+    async def api_collab_export(request):
+        """Copy a local Hermes task into the shared mesh task vault."""
+        if not _view_allowed(request):
+            return _forbidden("viewer auth required")
+        limited = _rate_limit(request, "collab-export")
+        if limited:
+            return limited
+        body = await _json_body(request)
+        task_id = str(body.get("task_id") or "").strip()
+        scan_tasks()
+        source = None
+        for bucket in ("pending", "processing", "done"):
+            for task in state["tasks"].get(bucket, []):
+                if str(task.get("id")) == task_id:
+                    source = dict(task)
+                    break
+            if source:
+                break
+        if not source:
+            return web.json_response({"error": "internal task not found"}, status=404)
+        source["status"] = "processing" if source.get("status") in {"working", "processing"} else "done" if source.get("status") == "done" else "pending"
+        source["exported_from"] = "hermes-internal"
+        try:
+            collab_vault.ensure_audit_clean()
+            saved = collab_vault.upsert_task(source)
+            entry = collab_vault.append_event(relay_client.local_node_id, "task", {"action": "export", "task": saved}, "local-export")
+        except VaultError as exc:
+            return web.json_response({"status": "rejected", "reason": str(exc)}, status=503)
+        broadcast({"type": "collab_event", "data": entry, "timestamp": entry["ts"]})
+        _record_collab_activity("audit", node_id=entry["node"], op=entry["op"], ledger_id=entry["id"], status="verified")
+        if relay_client.ready():
+            relay_client.forward("task", {"action": "export", "task": saved})
+        return web.json_response({"status": "ok", "task": saved, "ledger_id": entry["id"]})
 
     async def api_collab_ledger(request):
         node_id = _node_authorized(request)
@@ -750,6 +843,10 @@ def make_app():
         await ws.send_json(snapshot())
         try:
             async for raw in ws:
+                limited = _ws_rate_limited(ws)
+                if limited:
+                    await ws.send_json(limited)
+                    continue
                 try:
                     msg = json.loads(raw)
                 except (json.JSONDecodeError, TypeError):
@@ -780,6 +877,7 @@ def make_app():
     app.router.add_post("/api/collab/file", api_collab_file)
     app.router.add_post("/api/collab/task", api_collab_task)
     app.router.add_post("/api/collab/adopt", api_collab_adopt)
+    app.router.add_post("/api/collab/export", api_collab_export)
     app.router.add_get("/api/collab/ledger", api_collab_ledger)
     app.router.add_post("/api/mesh/revoke/prepare", api_mesh_prepare_revoke)
     app.router.add_post("/api/mesh/revoke", api_mesh_revoke)

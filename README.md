@@ -51,6 +51,8 @@ The following new routes are available. Owner-only routes require `X-Collab-Owne
 | POST | `/api/relay` | signed node | Verify and append a trusted relay event. |
 | POST | `/api/collab/file` | signed node | Read/write only under `collab/{task_id}/`. |
 | POST | `/api/collab/task` | signed node | Create, claim, or complete a collab task. |
+| POST | `/api/collab/adopt` | viewer/loopback | Copy a shared task into the local pending queue. |
+| POST | `/api/collab/export` | viewer/loopback | Push an internal Hermes task into the shared mesh vault and broadcast `collab_event`. |
 | GET | `/api/collab/ledger` | signed node | Read a bounded ledger page with HMAC authentication. |
 | POST | `/api/mesh/revoke/prepare` | owner | Issue a one-time 60-second mesh confirmation challenge. |
 | POST | `/api/mesh/revoke` | owner + mesh confirmation | Revoke a node and invalidate its tokens. |
@@ -128,6 +130,7 @@ All events: `{"type": string, "data": object, "timestamp": ISO}`
 | `discussion` | Live discussion entry |
 | `stats` | Derived task stats |
 | `collab_activity` | Realtime audit, node, rate-limit, and kill-switch activity |
+| `collab_event` | Shared task/file/relay event; frontend refreshes state for realtime shared-task updates |
 
 **Push a discussion entry** (WebSocket /ws or 8765):
 
@@ -145,7 +148,7 @@ Entries persist to `~/hermes-shared/log/live.jsonl` (reset by deleting that file
 | Discussion log | `~/hermes-shared/log/live.jsonl` |
 | Frontend | `frontend/index.html` |
 
-Override paths with env `HERMES_SHARED`. Ports override with `K2_WS_PORT` / `K2_HTTP_PORT`. The server binds to `127.0.0.1` by default; set `K2_BIND_HOST=0.0.0.0` only behind an explicitly protected firewall/tunnel. Sensitive-route rate limiting uses the cross-process SQLite store under `collab/.auth/rate_limit.sqlite3`; tune it with `K2_RATE_LIMIT` and `K2_RATE_WINDOW_SECONDS`.
+Override paths with env `HERMES_SHARED`. Ports override with `K2_WS_PORT` / `K2_HTTP_PORT`. The server binds to `127.0.0.1` by default; set `K2_BIND_HOST=0.0.0.0` only behind an explicitly protected firewall/tunnel. Sensitive-route rate limiting uses the cross-process SQLite store under `collab/.auth/rate_limit.sqlite3`; tune it with `K2_RATE_LIMIT` and `K2_RATE_WINDOW_SECONDS`. Raw and same-origin WebSockets use a separate per-client SQLite limiter; tune it with `K2_WS_RATE_LIMIT` and `K2_WS_RATE_WINDOW_SECONDS`. Viewer access to `/api/state` and `/api/security` is recorded in runtime-only `collab/.auth/viewer_access.jsonl` and rendered in the Security panel.
 
 ## Viewer authentication (data-bearing endpoints)
 

@@ -29,7 +29,7 @@ try:
 except ImportError:  # pragma: no cover
     aiohttp = None
 
-from .trust import TrustManager, ALLOWED_OPS
+from .trust import ALLOWED_OPS, TrustManager
 
 logger = logging.getLogger("k2.relay")
 
@@ -138,23 +138,21 @@ class RelayClient:
                     self._mark_ok(url)
                 else:
                     self._queue_safe(message)
-            except Exception:
+            except (OSError, RuntimeError, ValueError):
                 self._queue_safe(message)
         return accepted
 
     async def _dispatch_async(self, message: dict[str, Any]) -> None:
-        accepted = False
         for url in list(self.partners):
             if not self._available(url):
                 await self._queue_safe_async(message)
                 continue
             try:
                 if await self._post_async(url, message):
-                    accepted = True
                     self._mark_ok(url)
                 else:
                     await self._queue_safe_async(message)
-            except Exception:
+            except (OSError, RuntimeError, ValueError, TimeoutError):
                 await self._queue_safe_async(message)
         # accepted events are applied; queued retries are pruned by capacity.
 
@@ -202,7 +200,7 @@ class RelayClient:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # nosec B310 - partner URLs are scheme-filtered
                 ok = 200 <= resp.status < 300
                 self._mark_fail(url) if not ok else self._mark_ok(url)
                 return ok
@@ -218,10 +216,9 @@ class RelayClient:
             "Authorization": f"Bearer {self.local_node_token or 'x'}",
         }
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{url}/api/relay", json=message, headers=headers, timeout=aiohttp.ClientTimeout(total=self.timeout)
-                ) as resp:
+            async with aiohttp.ClientSession() as session, session.post(
+                f"{url}/api/relay", json=message, headers=headers, timeout=aiohttp.ClientTimeout(total=self.timeout)
+            ) as resp:
                     ok = 200 <= resp.status < 300
                     self._mark_ok(url) if ok else self._mark_fail(url)
                     return ok
@@ -238,5 +235,7 @@ def _drop_queued_for(nonce: str) -> None:
 
 
 import time as _t
+
+
 def time_now() -> float:
     return _t.time()

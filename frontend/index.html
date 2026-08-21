@@ -51,7 +51,7 @@ body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:13p
 .task-item.working{border-left-color:var(--green)}
 .task-item.done{border-left-color:var(--blue);opacity:.6}
 .task-item .t{color:var(--txt)}
-.task-item .s{font-size:8px;color:var(--dim);margin-top:1px}
+.task-item .s{font-size:8px;color:var(--dim);margin-top:1px}.task-action{float:right;border:1px solid #334;color:var(--dim);background:transparent;font:inherit;font-size:7px;padding:2px 4px;cursor:pointer}.task-action:hover{color:var(--green);border-color:var(--green)}
 .task-item.new-task{animation:taskSlideIn .5s ease-out}
 @keyframes taskSlideIn{0%{opacity:0;transform:translateX(-14px)}100%{opacity:1;transform:translateX(0)}}
 @keyframes scanLine{0%{top:-100%}100%{top:100%}}
@@ -106,7 +106,7 @@ body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:13p
 .mesh-activity-feed{height:180px;overflow-y:auto;border:1px solid var(--line);background:var(--panel2);border-radius:5px;padding:5px}
 .activity-row{display:flex;gap:7px;padding:6px 5px;border-bottom:1px solid rgba(30,42,53,.65);font-size:8px;line-height:1.35}.activity-row:last-child{border-bottom:0}
 .activity-dot{flex:0 0 6px;width:6px;height:6px;margin-top:3px;border-radius:50%;background:var(--blue);box-shadow:0 0 5px currentColor}.activity-row.audit .activity-dot{background:var(--green)}.activity-row.rate_limit .activity-dot{background:var(--amber)}.activity-row.tamper .activity-dot{background:var(--red)}.activity-row.kill_switch .activity-dot{background:var(--red)}
-.activity-main{min-width:0}.activity-main strong{font-weight:500;color:var(--txt)}.activity-main small{display:block;color:var(--dim);font-size:7px;margin-top:2px}
+.activity-main{min-width:0}.activity-main strong{font-weight:500;color:var(--txt)}.activity-main small{display:block;color:var(--dim);font-size:7px;margin-top:2px}.viewer-access{max-height:120px;overflow-y:auto;border-top:1px solid var(--line);margin-top:8px;padding-top:8px}.viewer-access .access-row{font-size:8px;color:var(--dim);padding:3px 0}.viewer-access .access-row b{color:var(--txt);font-weight:400}.alert-banner{display:none;border:1px solid var(--amber);background:#15140d;color:var(--amber);padding:7px 10px;margin:-4px 0 10px;font-size:9px;letter-spacing:.2px}.alert-banner.show{display:block}.alert-banner.bad{border-color:var(--red);background:#190d12;color:var(--red)}.alert-banner.good{border-color:var(--green);background:#0b1712;color:var(--green)}
 .mesh-owner{border-left:1px solid var(--line);padding-left:10px}.mesh-owner h3{font-size:9px;color:var(--dim);letter-spacing:.5px;margin-bottom:7px}.mesh-owner input,.mesh-owner select{width:100%;background:#0a1117;border:1px solid var(--line);border-radius:4px;color:var(--txt);font:inherit;font-size:9px;padding:7px;margin-bottom:6px}.mesh-owner button{width:100%;border:1px solid rgba(255,180,84,.45);background:rgba(255,180,84,.08);color:var(--amber);border-radius:4px;padding:7px;font:inherit;font-size:8px;letter-spacing:.6px;cursor:pointer}.mesh-owner button:hover{background:rgba(255,180,84,.16)}.mesh-owner button.danger{border-color:rgba(255,84,112,.6);background:rgba(255,84,112,.1);color:var(--red)}.mesh-owner .hint{color:var(--dim);font-size:7px;line-height:1.45;margin:4px 0 7px}.kill-confirm{border-top:1px solid var(--line);margin-top:8px;padding-top:8px}.kill-confirm[hidden]{display:none}.challenge-phrase{display:block;color:var(--amber);font-size:9px;padding:6px;background:#15140d;border-radius:4px;margin-bottom:6px;word-break:break-all}.mesh-action-status{font-size:8px;min-height:12px;color:var(--dim);margin-top:7px}.mesh-action-status.ok{color:var(--green)}.mesh-action-status.err{color:var(--red)}
 @media(max-width:900px){.collab-layout{grid-template-columns:1fr 1fr}.mesh-owner{grid-column:1/-1;border-left:0;border-top:1px solid var(--line);padding:10px 0 0}.mesh-activity-feed{height:150px}}
 @media(max-width:640px){.collab-layout{grid-template-columns:1fr;padding:8px}.mesh-owner{grid-column:auto}.mesh-activity-feed{height:170px}}
@@ -131,6 +131,7 @@ body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:13p
   <h1>HERMES MONITOR <span style="color:#555;font-size:8px;border:1px solid #333;padding:2px 4px;letter-spacing:0">v1.0</span></h1>
   <div class="live" id="clock">--:--:-- UTC</div>
 </div>
+<div id="alert-banner" class="alert-banner" role="status" aria-live="polite"></div>
 
 <div class="legacy-dashboard dsk">
   <div class="agent-strip">
@@ -201,6 +202,7 @@ body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:13p
         <div class="mesh-metric"><div class="k">UPTIME</div><div class="v" id="sec-uptime">-</div></div>
       </div>
       <div class="mesh-nodes scrollbar" id="sec-findings-list"><div class="mesh-meta">No findings — security posture clean.</div></div>
+      <div class="viewer-access" id="sec-viewer-access"><div class="mesh-meta">No viewer access recorded.</div></div>
     </section>
   </div>
 </div>
@@ -301,6 +303,14 @@ function renderShared(){
   var btns=list.querySelectorAll('.adopt-btn');
   for(var i=0;i<btns.length;i++){btns[i].onclick=(function(id){return function(){adoptTask(id);};})(btns[i].getAttribute('data-id'));}
 }
+function exportTask(id){
+  if(!id)return;
+  fetch(authQuery('/api/collab/export'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:id})})
+    .then(function(r){return r.json().then(function(d){return {ok:r.ok,data:d};});})
+    .then(function(result){if(!result.ok)throw new Error(result.data.error||result.data.reason||'export failed');notify('TASK PUSHED TO SHARED · '+id,'good');refreshState();})
+    .catch(function(err){notify(err.message,'bad');});
+}
+
 function adoptTask(id){
   if(!id)return;
   fetch(authQuery('/api/collab/adopt'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:id})})
@@ -347,8 +357,11 @@ function renderSecurity(){
   setText('sec-uptime',s.uptime_min!=null?(Math.min(9999,Math.round(s.uptime_min))+'m'):'-');
   var list=document.getElementById('sec-findings-list');
   if(list){list.innerHTML=(s.findings&&s.findings.length)?s.findings.map(function(f){return '<div class="mesh-node"><div class="node-top"><span>'+esc((f.type||'finding').toUpperCase())+'</span><span class="cert-bad">'+esc((f.severity||'info').toUpperCase())+'</span></div><div class="node-detail">flagged by security watchdog</div></div>';}).join(''):'<div class="mesh-meta">No findings — security posture clean.</div>';}
+  var access=document.getElementById('sec-viewer-access'), rows=s.viewer_access||[];
+  if(access){access.innerHTML=rows.length?'<div class="mesh-meta">VIEWER ACCESS</div>'+rows.slice(-20).reverse().map(function(v){return '<div class="access-row"><b>'+esc(v.endpoint||'endpoint')+'</b> · '+esc(v.identity||'unknown')+' · '+esc(shortT(v.timestamp||''))+'</div>';}).join(''):'<div class="mesh-meta">No viewer access recorded.</div>';}
 }
 function refreshSecurity(){fetch(authQuery('/api/security')).then(function(r){return r.json();}).then(function(d){if(d&&d.security){S.security=d.security;renderSecurity();}}).catch(function(){});}
+function notify(text,kind){var el=document.getElementById('alert-banner');if(!el)return;el.textContent=text;el.className='alert-banner show '+(kind||'');clearTimeout(window._alertTimer);window._alertTimer=setTimeout(function(){el.className='alert-banner';},7000);}
 
 var killChallenge=null;
 function ownerHeaders(){var token=(document.getElementById('mesh-owner-token')||{}).value||'';return token?{'Content-Type':'application/json','X-Collab-Owner':token}:null;}
@@ -364,18 +377,20 @@ function renderTasks(tasks){
   (t.pending||[]).forEach(function(x){maps.pending.push(['pending',x]);});
   (t.processing||[]).forEach(function(x){maps.working.push(['working',x]);});
   (t.done||[]).forEach(function(x){maps.done.push(['done',x]);});
-  function htmlM(items){
-    return items.map(function(it){var c=it[0],x=it[1];return '<div class="task-item '+c+'"><div class="t">'+esc(x.title||x.id)+'</div><div class="s">'+(x.assigned_to?esc(x.assigned_to):'')+'</div></div>';}).join('');
+  function htmlM(items,pushable){
+    return items.map(function(it){var c=it[0],x=it[1],action=pushable?'<button class="task-action export-task" data-id="'+esc(x.id||'')+'" type="button">PUSH →</button>':'';return '<div class="task-item '+c+'"><div class="t">'+esc(x.title||x.id)+'</div><div class="s">'+action+(x.assigned_to?esc(x.assigned_to):'')+'</div></div>';}).join('');
   }
+  function bindExportButtons(){var btns=document.querySelectorAll('.export-task');for(var i=0;i<btns.length;i++){btns[i].onclick=(function(id){return function(){exportTask(id);};})(btns[i].getAttribute('data-id'));}}
   Object.keys(cols).forEach(function(key){
     var el=document.getElementById(cols[key]);
-    if(el){el.innerHTML=htmlM(maps[key]);}
+    if(el){el.innerHTML=htmlM(maps[key],key==='pending');}
   });
   var mob=document.getElementById('col-mobile-list')||document.getElementById('col-mobile-m');
   if(mob){
     var all=maps.pending.concat(maps.working,maps.done);
-    mob.innerHTML=htmlM(all);
+    mob.innerHTML=htmlM(all,false);
   }
+  bindExportButtons();
 }
 
 function renderChat(animateNew){
@@ -436,10 +451,12 @@ function wsC(){
     try{var d=JSON.parse(ev.data);}catch(e){return;}
     if(d.type==='init'&&d.data){updateUI(d.data);}
     else if(d.type==='tasks_update'){updateUI({tasks:d.data});}
-    else if(d.type==='agent_status'){S.agents=d.data;render();}
-    else if(d.type==='health'){S.health=d.data;render();}
+    else if(d.type==='agent_status'){var previous=S.agents||{};S.agents=d.data;render();Object.keys(S.agents||{}).forEach(function(id){var before=previous[id]||{},after=S.agents[id]||{};if(before.status==='working'&&after.status!=='working')notify('AGENT COMPLETE · '+id,'good');});}
+    else if(d.type==='health'){S.health=d.data;render();var cpu=Number(d.data&&d.data.cpu)||0,ramTotal=Number(d.data&&d.data.ram_total_mb)||0,ramUsed=Number(d.data&&d.data.ram_used_mb)||0,diskTotal=Number(d.data&&d.data.disk_total_gb)||0,diskUsed=Number(d.data&&d.data.disk_used_gb)||0,ramPct=ramTotal?ramUsed/ramTotal*100:0,diskPct=diskTotal?diskUsed/diskTotal*100:0;if(cpu>=90)notify('HEALTH ALERT · CPU '+cpu+'%','bad');else if(ramPct>=90)notify('HEALTH ALERT · RAM '+Math.round(ramPct)+'%','bad');else if(diskPct>=90)notify('HEALTH ALERT · DISK '+Math.round(diskPct)+'%','bad');}
     else if(d.type==='discussion'){updateUI({from:d.from,message:d.message,timestamp:d.timestamp});}
-    else if(d.type==='collab_activity'){appendCollabActivity(d.data);}
+    else if(d.type==='collab_event'){refreshState();if(d.data&&d.data.op==='task')notify('SHARED TASK UPDATED','good');}
+    else if(d.type==='collab_activity'){appendCollabActivity(d.data);if(d.data&&d.data.kind==='rate_limit')notify('RATE LIMIT · 429 · '+(d.data.scope||'request'),'bad');if(d.data&&d.data.kind==='tamper')notify('NODE TAMPERING · request rejected','bad');if(d.data&&d.data.kind==='node')notify('NODE JOINED · '+(d.data.node_id||'unknown'),'good');}
+    else if(d.type==='rate_limit'){notify('RAW WS RATE LIMIT · 429','bad');}
     else if(d.type==='collab_node'){refreshState();}
   };
   ws.onclose=function(){setTimeout(wsC,3000);};
