@@ -404,6 +404,7 @@ def make_app():
         body = await _json_body(request)
         valid, reason, signed_node = mesh_trust.verify(body, expected_node_id=node_id)
         if not valid:
+            _record_collab_activity("tamper", node_id=node_id, op=body.get("op", "unknown"), status=403, reason=reason)
             return web.json_response({"status": "rejected", "reason": reason}, status=403)
         try:
             entry = collab_vault.append_event(signed_node, body["op"], body["payload"], body["sig"])
@@ -422,8 +423,11 @@ def make_app():
             return limited
         body = await _json_body(request)
         valid, reason, _ = mesh_trust.verify(body, expected_node_id=node_id)
-        if not valid or body.get("op") != "file_update":
-            return web.json_response({"status": "rejected", "reason": reason if not valid else "operation not allowed"}, status=403)
+        if not valid:
+            _record_collab_activity("tamper", node_id=node_id, op=body.get("op", "unknown"), status=403, reason=reason)
+            return web.json_response({"status": "rejected", "reason": reason}, status=403)
+        if body.get("op") != "file_update":
+            return web.json_response({"status": "rejected", "reason": "operation not allowed"}, status=403)
         payload = body["payload"]
         action = payload.get("action", "read")
         path = payload.get("path")
@@ -460,8 +464,11 @@ def make_app():
             return limited
         body = await _json_body(request)
         valid, reason, _ = mesh_trust.verify(body, expected_node_id=node_id)
-        if not valid or body.get("op") != "task":
-            return web.json_response({"status": "rejected", "reason": reason if not valid else "operation not allowed"}, status=403)
+        if not valid:
+            _record_collab_activity("tamper", node_id=node_id, op=body.get("op", "unknown"), status=403, reason=reason)
+            return web.json_response({"status": "rejected", "reason": reason}, status=403)
+        if body.get("op") != "task":
+            return web.json_response({"status": "rejected", "reason": "operation not allowed"}, status=403)
         payload = body["payload"]
         action = payload.get("action", "create")
         task = payload.get("task") if isinstance(payload.get("task"), dict) else {key: value for key, value in payload.items() if key != "action"}
@@ -510,6 +517,7 @@ def make_app():
         signed = {"node_id": node_id, "op": "broadcast", "payload": {"action": "ledger_read", "limit": limit}, "nonce": nonce, "ts": ts, "sig": sig}
         valid, reason, _ = mesh_trust.verify(signed, expected_node_id=node_id)
         if not valid:
+            _record_collab_activity("tamper", node_id=node_id, op="ledger_read", status=403, reason=reason)
             return web.json_response({"status": "rejected", "reason": reason}, status=403)
         return web.json_response({"ledger": collab_vault.read_ledger(limit), "state": _collab_status()})
 

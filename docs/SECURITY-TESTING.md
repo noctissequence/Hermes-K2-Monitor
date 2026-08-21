@@ -173,3 +173,23 @@ python3 -m py_compile server.py collab/*.py tests/*.py scripts/*.py
 ```
 
 Ruff is expected to pass. Bandit findings must be reviewed by severity and context; the server's long-lived loop and websocket boundary deliberately log and contain unexpected exceptions, while deployment-level concerns such as load shedding and key compromise remain separate operational controls.
+
+## 10. Live attack simulation and browser validation
+
+To generate disposable realtime events against a temporary preview, start the server with a deliberately low relay limit and use the committed simulator:
+
+```bash
+K2_RATE_LIMIT=3 K2_RATE_WINDOW_SECONDS=60 python3 server.py
+python3 scripts/live_attack_sim.py \
+  --base http://127.0.0.1:8766 \
+  --owner "$COLLAB_OWNER_TOKEN" \
+  --mesh-key "$MESH_KEY" \
+  --node-id n-ui-attack \
+  --attempts 6
+```
+
+The simulator must report a `tamper_status` of `403`, at least one `429` in `relay_statuses`, and no transport failure. The dashboard should then show `NODE TAMPERING`, `429 RATE LIMIT`, `AUDIT`, and `NODE IDENTITY` events in the same-origin WebSocket feed.
+
+The owner kill-switch UI is verified in two stages. First, enter the owner token, select the disposable active node, and prepare a challenge. A wrong exact phrase or wrong `CONFIRM MESH REVOKE` value must produce `mesh confirmation mismatch` while the node remains active. A fresh challenge with the exact phrase and mesh confirmation must change the node card to `REVOKED`, persist the kill-switch, and emit a `KILL-SWITCH · <node_id> · revoked` activity event.
+
+For responsive validation, render at 390px width and verify that the agent cards stack, the task board uses one column without duplicate `ALL TASKS`, discussion follows the board, and no horizontal overflow is present. The SYSTEM, TODAY, and COLLAB MESH sections remain reachable by vertical scroll.
