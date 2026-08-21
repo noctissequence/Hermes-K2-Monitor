@@ -13,7 +13,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 ALLOWED_OPS = {"message", "task", "file_update", "broadcast", "join"}
 FORBIDDEN_KEY_TERMS = {"api_key", "apikey", "secret", "password", "private_key", "env", "hostname", "email", "internal_ip"}
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -68,7 +67,7 @@ class TrustManager:
         return {"node_id": node_id, "op": op, "payload": payload, "nonce": nonce, "ts": ts, "sig": sig}
 
     def signing_material(self, node_id: str, op: str, payload: dict[str, Any], nonce: str, ts: Any) -> bytes:
-        return f"{node_id}|{op}|{canonical_json(payload)}|{nonce}|{ts}".encode("utf-8")
+        return f"{node_id}|{op}|{canonical_json(payload)}|{nonce}|{ts}".encode()
 
     def verify(self, message: dict[str, Any], expected_node_id: str | None = None) -> tuple[bool, str, str | None]:
         if not isinstance(message, dict):
