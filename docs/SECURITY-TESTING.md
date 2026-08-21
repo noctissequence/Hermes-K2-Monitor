@@ -13,7 +13,7 @@ python3 -m unittest discover -s tests -p 'test_*.py' -v
 Output sehat harus berakhir dengan pola berikut:
 
 ```text
-Ran 13 tests in ...s
+Ran 16 tests in ...s
 OK
 ```
 
@@ -113,9 +113,9 @@ Dengan demikian test tidak menyentuh `collab/` production di repository. Jangan 
 
 ## 8. Coverage boundary and operational follow-up
 
-The suite covers the security invariants implemented in this phase, but no finite test suite can prove that every possible attack is impossible. The following attack classes remain operational follow-up work rather than silently being reported as covered: concurrent multi-process writes and lock contention, sustained request flooding and rate limiting, webhook replay across a partner link, traffic metadata leakage, CA key compromise, backup/restore tampering, filesystem permission drift under a different service account, and recovery tooling for a deliberately broken audit chain. These require deployment-level tests, load testing, or an explicit recovery runbook. The current implementation fails closed for detected integrity failures; it does not yet provide automatic audit-chain repair or a circuit breaker.
+The suite covers the security invariants implemented in this phase, but no finite test suite can prove that every possible attack is impossible. The following attack classes remain operational follow-up work rather than silently being reported as covered: sustained flooding beyond the configured local limiter, distributed rate-limit coordination across hosts, webhook replay across a partner link, traffic metadata leakage, CA key compromise, backup/restore tampering, filesystem permission drift under a different service account, and recovery tooling for a deliberately broken audit chain. These require deployment-level tests, load testing, or an explicit recovery runbook. The current implementation fails closed for detected integrity failures; it does not yet provide automatic audit-chain repair or a circuit breaker.
 
-## 10. Live smoke test
+## 9. Live smoke test
 
 With the server already running on HTTP port `8766`, execute the committed client from the repository root:
 
@@ -126,3 +126,49 @@ python3 scripts/live_smoke.py --base http://127.0.0.1:8766 --node-id n-live-smok
 ```
 
 The client checks `/api/state`, creates an invite, joins a temporary node, posts one signed relay event, and then reads `/api/collab/ledger` using a signed query envelope. Expected output includes `PASS /api/state status=200`, `PASS /api/relay status=200`, and `PASS /api/collab/ledger status=200` with at least one ledger entry and `audit.verified=True`. Use a temporary `COLLAB_DIR` for destructive or isolated smoke runs.
+
+## 10. Rate limiting and concurrent stress
+
+The server applies a SQLite-backed sliding-window limiter to sensitive routes. The default is 60 requests per 60 seconds per route and node/IP bucket. For a deterministic local test, start the server with a low limit:
+
+```bash
+export K2_RATE_LIMIT=8
+export K2_RATE_WINDOW_SECONDS=60
+python3 server.py
+```
+
+In another shell, run the multiprocessing harness:
+
+```bash
+python3 scripts/stress_concurrent.py \
+  --base http://127.0.0.1:8766 \
+  --workers 4 \
+  --requests-per-worker 25 \
+  --expect-429
+```
+
+The expected JSON report contains a `status_counts` entry for `429`, a positive `rate_limited` count, and latency statistics. The harness uses spawned processes and unique HMAC nonces; it fails on transport errors, unexpected server errors, or the absence of `429` when `--expect-429` is supplied. The SQLite limiter test separately verifies that concurrent writers cannot exceed the configured allowance.
+
+## 11. Audit-chain and node-identity anomaly scan
+
+The scanner is read-only and should be run against a copy or controlled maintenance view of the vault:
+
+```bash
+python3 scripts/audit_identity_scan.py \
+  --collab-dir ./collab \
+  --mesh-key "$MESH_KEY"
+```
+
+Exit code `0` means the audit chain, ledger-to-state node mapping, certificates, and persistent revoked-node registry passed the checks. Exit code `1` reports anomalies and never attempts repair. Exit code `2` means the scanner itself could not load the vault/auth state. High-signal anomalies include a broken or count-mismatched chain, unknown ledger node, revoked node appearing in the ledger, missing/expired/invalid certificate, or a revoked state missing from the persistent kill-switch store.
+
+## 12. Code-quality audit
+
+The repository can be checked with the same static-analysis tools used during review:
+
+```bash
+ruff check server.py collab scripts tests
+bandit -q -r server.py collab scripts tests -f txt
+python3 -m py_compile server.py collab/*.py tests/*.py scripts/*.py
+```
+
+Ruff is expected to pass. Bandit findings must be reviewed by severity and context; the server's long-lived loop and websocket boundary deliberately log and contain unexpected exceptions, while deployment-level concerns such as load shedding and key compromise remain separate operational controls.

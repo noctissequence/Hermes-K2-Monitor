@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Hermes K2 Monitor — real-time agent + system dashboard.
 WebSocket (8765) + HTTP frontend (8766).
@@ -12,12 +11,23 @@ Architecture (from agent-monitor-dashboard skill blueprint):
   - Discussion log ~/hermes-shared/log/live.jsonl
   - System health via psutil every 5s
 """
-import asyncio, datetime, hashlib, json, os, platform, secrets, time
+import asyncio
+import datetime
+import hashlib
+import json
+import logging
+import os
+import platform
+import secrets
+import time
 from pathlib import Path
 
 from collab.auth import AuthError, MeshAuth
+from collab.ratelimit import SQLiteRateLimiter
 from collab.trust import TrustManager
 from collab.vault import CollabVault, VaultError
+
+logger = logging.getLogger("hermes-k2-monitor")
 
 try:
     import websockets
@@ -50,6 +60,7 @@ COLLAB_ROOT = Path(os.environ.get("COLLAB_DIR", str(BASE / "collab"))).expanduse
 
 WS_PORT = int(os.environ.get("K2_WS_PORT", "8765"))
 HTTP_PORT = int(os.environ.get("K2_HTTP_PORT", "8766"))
+BIND_HOST = os.environ.get("K2_BIND_HOST", "127.0.0.1")
 
 AGENTS = ("yerin", "merlin")
 for d in (PENDING, PROCESSING, DONE, LOG_DIR):
@@ -59,6 +70,11 @@ for d in (PENDING, PROCESSING, DONE, LOG_DIR):
 collab_vault = CollabVault(COLLAB_ROOT)
 mesh_auth = MeshAuth(collab_vault.auth_dir, collab_vault)
 mesh_trust = TrustManager(mesh_auth.mesh_key, collab_vault.auth_dir)
+rate_limiter = SQLiteRateLimiter(
+    collab_vault.auth_dir / "rate_limit.sqlite3",
+    limit=int(os.environ.get("K2_RATE_LIMIT", "60")),
+    window_seconds=int(os.environ.get("K2_RATE_WINDOW_SECONDS", "60")),
+)
 
 # ---------------- state ----------------
 state = {
@@ -73,7 +89,7 @@ clients = set()
 
 try:
     BOOT_TS = psutil.boot_time() if psutil else time.time()
-except Exception:
+except (AttributeError, OSError, RuntimeError):
     BOOT_TS = time.time()
 
 def now_iso():
@@ -93,9 +109,11 @@ def load_discussion():
                 if line:
                     try:
                         out.append(json.loads(line))
-                    except Exception:
+                    except (json.JSONDecodeError, TypeError) as exc:
+                        logger.warning("Skipping malformed discussion line: %s", exc)
                         continue
-    except Exception:
+    except OSError as exc:
+        logger.warning("Could not load discussion log: %s", exc)
         return []
     return out
 
@@ -104,8 +122,8 @@ def append_discussion(from_, message):
     try:
         with open(LIVE_JSONL, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
-    except Exception:
-        pass
+    except (OSError, TypeError) as exc:
+        logger.warning("Could not persist discussion entry: %s", exc)
     state["discussion"].append(entry)
     if len(state["discussion"]) > 200:
         state["discussion"] = state["discussion"][-100:]
@@ -119,7 +137,8 @@ def read_task(fname):
                 "title": d.get("title", Path(fname).stem),
                 "assigned_to": d.get("assigned_to", ""),
                 "status": d.get("status", "")}
-    except Exception:
+    except (OSError, json.JSONDecodeError, AttributeError, TypeError) as exc:
+        logger.warning("Could not read task %s: %s", fname, exc)
         return {"id": Path(fname).stem, "title": Path(fname).stem,
                 "assigned_to": "", "status": ""}
 
@@ -130,7 +149,6 @@ def scan_tasks():
 
 def update_agents():
     active = state["tasks"]["processing"]
-    working_agents = set(t.get("assigned_to") for t in active if t.get("assigned_to"))
     for a in AGENTS:
         mine = [t for t in active if t.get("assigned_to") == a]
         if mine:
@@ -142,7 +160,7 @@ def update_agents():
 
 def compute_task_hash():
     raw = json.dumps(state["tasks"], sort_keys=True, default=str)
-    return hashlib.md5(raw.encode()).hexdigest()
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 def get_health():
     if not psutil:
@@ -154,7 +172,8 @@ def get_health():
                 "ram_used_mb": vm.used // 2**20, "ram_total_mb": vm.total // 2**20,
                 "disk_used_gb": du.used // 2**30, "disk_total_gb": du.total // 2**30,
                 "uptime": uptime_sec()}
-    except Exception:
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.warning("Could not collect system health: %s", exc)
         return dict(state["health"], uptime=uptime_sec())
 
 # ---------------- broadcast ----------------
@@ -166,7 +185,7 @@ def broadcast(payload):
     for ws in clients:
         try:
             asyncio.create_task(ws.send(msg))
-        except Exception:
+        except (RuntimeError, TypeError, OSError):
             dead.append(ws)
     for ws in dead:
         clients.discard(ws)
@@ -185,7 +204,7 @@ async def periodic():
             state["health"] = get_health()
             broadcast({"type": "health", "data": state["health"], "timestamp": now_iso()})
         except Exception:
-            pass
+            logger.exception("Periodic monitor iteration failed")
         await asyncio.sleep(2)
 
 async def mock_startup():
@@ -209,7 +228,8 @@ async def ws_handler(ws):
         async for raw in ws:
             try:
                 msg = json.loads(raw)
-            except Exception:
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("Ignoring malformed websocket message")
                 continue
             if msg.get("type") == "add_discussion":
                 frm = msg.get("from") or "system"
@@ -218,14 +238,14 @@ async def ws_handler(ws):
                 broadcast({"type": "discussion", "from": frm, "message": message,
                            "timestamp": entry["timestamp"]})
     except Exception:
-        pass
+        logger.info("Websocket client disconnected or failed", exc_info=True)
     finally:
         clients.discard(ws)
 
 async def ws_server():
     if ws_serve is None:
         await asyncio.Future()
-    async with ws_serve(ws_handler, "0.0.0.0", WS_PORT, ping_interval=None,
+    async with ws_serve(ws_handler, BIND_HOST, WS_PORT, ping_interval=None,
                         max_queue=16, max_size=2**20):
         await asyncio.Future()
 
@@ -266,6 +286,19 @@ def _forbidden(reason="forbidden"):
     return web.json_response({"error": reason}, status=403)
 
 
+def _rate_limit(request, scope: str, identity: str | None = None):
+    peer = request.remote or "unknown"
+    bucket = f"{scope}:{identity or peer}"
+    decision = rate_limiter.check(bucket)
+    if decision.allowed:
+        return None
+    return web.json_response(
+        {"error": "rate limit exceeded", "retry_after": decision.retry_after, "limit": decision.limit, "window_seconds": rate_limiter.window_seconds},
+        status=429,
+        headers={"Retry-After": str(decision.retry_after)},
+    )
+
+
 # ---------------- aiohttp app (:8766) ----------------
 def make_app():
     app = web.Application(client_max_size=2**20)
@@ -284,6 +317,9 @@ def make_app():
                                   "collab": _collab_status()})
 
     async def api_invite(request):
+        limited = _rate_limit(request, "auth-invite")
+        if limited:
+            return limited
         if not _owner_authorized(request):
             return _forbidden()
         body = await _json_body(request)
@@ -295,6 +331,9 @@ def make_app():
         return web.json_response(result)
 
     async def api_join(request):
+        limited = _rate_limit(request, "auth-join")
+        if limited:
+            return limited
         body = await _json_body(request)
         try:
             result = mesh_auth.join(body.get("node_id"), body.get("conn_code") or body.get("code"), body.get("expires_at"))
@@ -307,6 +346,9 @@ def make_app():
         node_id = _node_authorized(request)
         if not node_id:
             return _forbidden()
+        limited = _rate_limit(request, "relay", node_id)
+        if limited:
+            return limited
         body = await _json_body(request)
         valid, reason, signed_node = mesh_trust.verify(body, expected_node_id=node_id)
         if not valid:
@@ -322,6 +364,9 @@ def make_app():
         node_id = _node_authorized(request)
         if not node_id:
             return _forbidden()
+        limited = _rate_limit(request, "file", node_id)
+        if limited:
+            return limited
         body = await _json_body(request)
         valid, reason, _ = mesh_trust.verify(body, expected_node_id=node_id)
         if not valid or body.get("op") != "file_update":
@@ -356,6 +401,9 @@ def make_app():
         node_id = _node_authorized(request)
         if not node_id:
             return _forbidden()
+        limited = _rate_limit(request, "task", node_id)
+        if limited:
+            return limited
         body = await _json_body(request)
         valid, reason, _ = mesh_trust.verify(body, expected_node_id=node_id)
         if not valid or body.get("op") != "task":
@@ -388,6 +436,9 @@ def make_app():
         node_id = _node_authorized(request)
         if not node_id:
             return _forbidden()
+        limited = _rate_limit(request, "ledger", node_id)
+        if limited:
+            return limited
         try:
             limit = int(request.query.get("limit", "100"))
         except ValueError:
@@ -408,6 +459,9 @@ def make_app():
         return web.json_response({"ledger": collab_vault.read_ledger(limit), "state": _collab_status()})
 
     async def api_mesh_revoke(request):
+        limited = _rate_limit(request, "mesh-revoke")
+        if limited:
+            return limited
         if not _owner_authorized(request):
             return _forbidden()
         body = await _json_body(request)
@@ -426,7 +480,8 @@ def make_app():
             async for raw in ws:
                 try:
                     msg = json.loads(raw)
-                except Exception:
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning("Ignoring malformed aiohttp websocket message")
                     continue
                 if msg.get("type") == "add_discussion":
                     entry = append_discussion(msg.get("from") or "system",
@@ -435,7 +490,7 @@ def make_app():
                                "message": entry["message"],
                                "timestamp": entry["timestamp"]})
         except Exception:
-            pass
+            logger.info("Aiohttp websocket client disconnected or failed", exc_info=True)
         return ws
 
     app.router.add_get("/", index)
@@ -454,7 +509,7 @@ def make_app():
 async def http_server():
     runner = web.AppRunner(make_app())
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", HTTP_PORT)
+    site = web.TCPSite(runner, BIND_HOST, HTTP_PORT)
     await site.start()
     await asyncio.Future()
 
@@ -466,7 +521,7 @@ def main():
         tasks.append(ws_server())
     if aiohttp is not None:
         tasks.append(http_server())
-    print(f"[k2-monitor] Hermes K2 Monitor\n  WS  : ws://0.0.0.0:{WS_PORT}\n  HTTP: http://0.0.0.0:{HTTP_PORT}\n  shared: {SHARED}", flush=True)
+    print(f"[k2-monitor] Hermes K2 Monitor\n  WS  : ws://{BIND_HOST}:{WS_PORT}\n  HTTP: http://{BIND_HOST}:{HTTP_PORT}\n  shared: {SHARED}", flush=True)
     try:
         asyncio.get_event_loop().run_until_complete(asyncio.gather(*tasks))
     except KeyboardInterrupt:

@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
 import hmac
-import json
 import os
 import tempfile
 import time
@@ -15,14 +14,17 @@ from collab.identity import NodeIdentityManager
 from collab.trust import TrustError
 from collab.vault import CollabVault, VaultError
 
+TEST_OWNER_TOKEN = os.environ.get("COLLAB_OWNER_TOKEN", "owner-test-token")  # nosec B105
+
 
 class CollabCoreHTTPTests(AioHTTPTestCase):
     async def get_application(self):
         self.tmp = tempfile.TemporaryDirectory()
         os.environ["COLLAB_DIR"] = self.tmp.name
         os.environ["MESH_KEY"] = "test-mesh-key-for-hermes-collab"
-        os.environ["COLLAB_OWNER_TOKEN"] = "owner-test-token"
+        os.environ["COLLAB_OWNER_TOKEN"] = TEST_OWNER_TOKEN
         import importlib
+
         import server
         self.server_module = importlib.reload(server)
         return self.server_module.make_app()
@@ -46,7 +48,7 @@ class CollabCoreHTTPTests(AioHTTPTestCase):
     @unittest_run_loop
     async def test_invite_join_single_use_and_bad_code(self):
         response = await self.client.request(
-            "POST", "/api/auth/invite", headers={"X-Collab-Owner": "owner-test-token"}, json={"node_id": "n-test", "ttl": 60}
+            "POST", "/api/auth/invite", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-test", "ttl": 60}
         )
         self.assertEqual(response.status, 200)
         invite = await response.json()
@@ -65,26 +67,37 @@ class CollabCoreHTTPTests(AioHTTPTestCase):
         self.assertEqual(reused.status, 403)
 
     @unittest_run_loop
+    async def test_rate_limit_returns_429_and_retry_after(self):
+        self.server_module.rate_limiter.limit = 1
+        self.server_module.rate_limiter.reset()
+        first = await self.client.request("POST", "/api/auth/invite", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-rate-one"})
+        self.assertEqual(first.status, 200)
+        second = await self.client.request("POST", "/api/auth/invite", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-rate-two"})
+        self.assertEqual(second.status, 429)
+        self.assertIn("Retry-After", second.headers)
+        self.assertEqual((await second.json())["error"], "rate limit exceeded")
+
+    @unittest_run_loop
     async def test_auth_boundary_and_expired_invite_rejected(self):
         missing_owner = await self.client.request("POST", "/api/auth/invite", json={"node_id": "n-boundary"})
         self.assertEqual(missing_owner.status, 403)
         wrong_owner = await self.client.request("POST", "/api/auth/invite", headers={"X-Collab-Owner": "wrong"}, json={"node_id": "n-boundary"})
         self.assertEqual(wrong_owner.status, 403)
-        invalid_node = await self.client.request("POST", "/api/auth/invite", headers={"X-Collab-Owner": "owner-test-token"}, json={"node_id": "../escape"})
+        invalid_node = await self.client.request("POST", "/api/auth/invite", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "../escape"})
         self.assertEqual(invalid_node.status, 400)
 
         invite_response = await self.client.request(
-            "POST", "/api/auth/invite", headers={"X-Collab-Owner": "owner-test-token"}, json={"node_id": "n-expired", "ttl": 1}
+            "POST", "/api/auth/invite", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-expired", "ttl": 1}
         )
         invite = await invite_response.json()
-        time.sleep(1.1)
+        await asyncio.sleep(1.1)
         expired = await self.client.request("POST", "/api/auth/join", json={"node_id": "n-expired", "conn_code": invite["code"], "expires_at": invite["expires_at"]})
         self.assertEqual(expired.status, 403)
 
     @unittest_run_loop
     async def test_signed_relay_and_replay_rejected(self):
         invite_response = await self.client.request(
-            "POST", "/api/auth/invite", headers={"X-Collab-Owner": "owner-test-token"}, json={"node_id": "n-relay"}
+            "POST", "/api/auth/invite", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-relay"}
         )
         invite = await invite_response.json()
         joined = await self.client.request("POST", "/api/auth/join", json={"node_id": "n-relay", "conn_code": invite["code"]})
@@ -111,7 +124,7 @@ class CollabCoreHTTPTests(AioHTTPTestCase):
     @unittest_run_loop
     async def test_file_whitelist_allows_collab_and_denies_personal_paths(self):
         invite_response = await self.client.request(
-            "POST", "/api/auth/invite", headers={"X-Collab-Owner": "owner-test-token"}, json={"node_id": "n-file"}
+            "POST", "/api/auth/invite", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-file"}
         )
         invite = await invite_response.json()
         joined = await self.client.request("POST", "/api/auth/join", json={"node_id": "n-file", "conn_code": invite["code"]})
@@ -180,13 +193,13 @@ class CollabCoreHTTPTests(AioHTTPTestCase):
     @unittest_run_loop
     async def test_revoke_invalidates_token(self):
         invite_response = await self.client.request(
-            "POST", "/api/auth/invite", headers={"X-Collab-Owner": "owner-test-token"}, json={"node_id": "n-revoke"}
+            "POST", "/api/auth/invite", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-revoke"}
         )
         invite = await invite_response.json()
         joined = await self.client.request("POST", "/api/auth/join", json={"node_id": "n-revoke", "conn_code": invite["code"]})
         credentials = await joined.json()
         headers = {"Authorization": "Bearer " + credentials["token"]}
-        revoked = await self.client.request("POST", "/api/mesh/revoke", headers={"X-Collab-Owner": "owner-test-token"}, json={"node_id": "n-revoke"})
+        revoked = await self.client.request("POST", "/api/mesh/revoke", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-revoke"})
         self.assertEqual(revoked.status, 200)
         denied = await self.client.request("GET", "/api/collab/ledger", headers=headers)
         self.assertEqual(denied.status, 403)
@@ -194,7 +207,7 @@ class CollabCoreHTTPTests(AioHTTPTestCase):
     @unittest_run_loop
     async def test_signed_task_and_ledger_read(self):
         invite_response = await self.client.request(
-            "POST", "/api/auth/invite", headers={"X-Collab-Owner": "owner-test-token"}, json={"node_id": "n-task"}
+            "POST", "/api/auth/invite", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-task"}
         )
         invite = await invite_response.json()
         joined = await self.client.request("POST", "/api/auth/join", json={"node_id": "n-task", "conn_code": invite["code"]})
@@ -224,7 +237,7 @@ class CollabCoreHTTPTests(AioHTTPTestCase):
     @unittest_run_loop
     async def test_audit_tamper_is_detected_and_new_events_fail_closed(self):
         vault = self.server_module.collab_vault
-        first = vault.append_event("n-audit", "message", {"text": "original"}, "sig")
+        vault.append_event("n-audit", "message", {"text": "original"}, "sig")
         self.assertTrue(vault.verify_audit_chain())
         raw = vault.ledger_path.read_text(encoding="utf-8").replace("original", "tampered")
         vault.ledger_path.write_text(raw, encoding="utf-8")
@@ -236,7 +249,7 @@ class CollabCoreHTTPTests(AioHTTPTestCase):
     @unittest_run_loop
     async def test_certificate_integrity_and_revoke_persist_after_restart(self):
         invite_response = await self.client.request(
-            "POST", "/api/auth/invite", headers={"X-Collab-Owner": "owner-test-token"}, json={"node_id": "n-persist"}
+            "POST", "/api/auth/invite", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-persist"}
         )
         invite = await invite_response.json()
         joined = await self.client.request("POST", "/api/auth/join", json={"node_id": "n-persist", "conn_code": invite["code"]})
@@ -247,7 +260,7 @@ class CollabCoreHTTPTests(AioHTTPTestCase):
         tampered["node_id"] = "n-other"
         self.assertFalse(self.server_module.mesh_auth.identity.verify("n-persist", tampered))
 
-        revoked = await self.client.request("POST", "/api/mesh/revoke", headers={"X-Collab-Owner": "owner-test-token"}, json={"node_id": "n-persist"})
+        revoked = await self.client.request("POST", "/api/mesh/revoke", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-persist"})
         self.assertEqual(revoked.status, 200)
         restarted_vault = CollabVault(self.tmp.name)
         restarted_auth = MeshAuth(restarted_vault.auth_dir, restarted_vault)
@@ -255,7 +268,7 @@ class CollabCoreHTTPTests(AioHTTPTestCase):
         self.assertIsNone(restarted_auth.verify_token(credentials["token"]))
         self.assertFalse(restarted_auth.identity.verify("n-persist"))
         new_invite_response = await self.client.request(
-            "POST", "/api/auth/invite", headers={"X-Collab-Owner": "owner-test-token"}, json={"node_id": "n-persist"}
+            "POST", "/api/auth/invite", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-persist"}
         )
         new_invite = await new_invite_response.json()
         rejoin = await self.client.request("POST", "/api/auth/join", json={"node_id": "n-persist", "conn_code": new_invite["code"]})
@@ -291,7 +304,7 @@ class CollabCoreHTTPTests(AioHTTPTestCase):
     @unittest_run_loop
     async def test_encrypted_auth_store_tamper_fails_closed(self):
         invite_response = await self.client.request(
-            "POST", "/api/auth/invite", headers={"X-Collab-Owner": "owner-test-token"}, json={"node_id": "n-store"}
+            "POST", "/api/auth/invite", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-store"}
         )
         invite = await invite_response.json()
         joined = await self.client.request("POST", "/api/auth/join", json={"node_id": "n-store", "conn_code": invite["code"]})

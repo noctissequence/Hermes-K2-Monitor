@@ -59,6 +59,19 @@ python3 -m py_compile server.py collab/*.py tests/test_collab_core.py
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
+For live and concurrent operational checks, use the committed scripts:
+
+```bash
+# Live state, invite/join, signed relay, and signed ledger read
+python3 scripts/live_smoke.py --base http://127.0.0.1:8766
+
+# Four spawned processes, 25 signed relay requests each; expect 429 with a low configured limit
+python3 scripts/stress_concurrent.py --base http://127.0.0.1:8766 --workers 4 --requests-per-worker 25 --expect-429
+
+# Read-only audit-chain and node-identity anomaly report
+python3 scripts/audit_identity_scan.py --collab-dir ./collab
+```
+
 The tests exercise both API-level and direct module behavior. `test_signed_relay_and_replay_rejected` proves a valid HMAC message is accepted, a repeated nonce is rejected with `403`, and a tampered payload is rejected. `test_invite_join_single_use_and_bad_code` proves invalid and reused join codes fail. `test_file_whitelist_allows_collab_and_denies_personal_paths` proves traversal is blocked. `test_audit_tamper_is_detected_and_new_events_fail_closed` mutates `ledger.jsonl` and verifies the chain turns tampered and blocks new events. `test_certificate_integrity_and_revoke_persist_after_restart` mutates a certificate in memory, revokes a node, recreates the vault/auth objects, and proves the node remains revoked and its old token cannot authenticate.
 
 ## Run
@@ -100,7 +113,7 @@ Entries persist to `~/hermes-shared/log/live.jsonl` (reset by deleting that file
 | Discussion log | `~/hermes-shared/log/live.jsonl` |
 | Frontend | `frontend/index.html` |
 
-Override paths with env `HERMES_SHARED`. Ports override with `K2_WS_PORT` / `K2_HTTP_PORT`.
+Override paths with env `HERMES_SHARED`. Ports override with `K2_WS_PORT` / `K2_HTTP_PORT`. The server binds to `127.0.0.1` by default; set `K2_BIND_HOST=0.0.0.0` only behind an explicitly protected firewall/tunnel. Sensitive-route rate limiting uses the cross-process SQLite store under `collab/.auth/rate_limit.sqlite3`; tune it with `K2_RATE_LIMIT` and `K2_RATE_WINDOW_SECONDS`.
 
 ## Keep-alive (self-heal)
 

@@ -20,7 +20,7 @@ class CollabVault:
     """File-backed collab storage; personal Hermes paths are never exposed."""
 
     TASK_STATUSES = ("pending", "processing", "done")
-    FORBIDDEN_PARTS = {".auth", ".hermes", "keys", "key", ".env", "config.yaml", "config.yml"}
+    FORBIDDEN_PARTS = frozenset({".auth", ".hermes", "keys", "key", ".env", "config.yaml", "config.yml"})
 
     def __init__(self, root: str | os.PathLike[str]):
         self.root = Path(root).expanduser().resolve()

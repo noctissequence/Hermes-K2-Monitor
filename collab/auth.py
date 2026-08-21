@@ -247,8 +247,11 @@ class MeshAuth:
                     return node_id
         return None
 
+    def revoked_nodes(self) -> set[str]:
+        return {str(value) for value in self._read_store(self.revoked_path, {"nodes": []}).get("nodes", [])}
+
     def _is_revoked(self, node_id: str) -> bool:
-        return node_id in set(self._read_store(self.revoked_path, {"nodes": []}).get("nodes", []))
+        return node_id in self.revoked_nodes()
 
     def revoke_node(self, node_id: str) -> bool:
         changed = self.vault.revoke_node(node_id)
@@ -256,7 +259,7 @@ class MeshAuth:
             return False
         self.identity.revoke(node_id)
         revoked = self._read_store(self.revoked_path, {"nodes": []})
-        nodes = set(str(value) for value in revoked.get("nodes", []))
+        nodes = {str(value) for value in revoked.get("nodes", [])}
         nodes.add(node_id)
         self._write_store(self.revoked_path, {"nodes": sorted(nodes)})
         with self.tokens_path.open("a+b") as lock_file:
