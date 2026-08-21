@@ -239,7 +239,9 @@ var S={agents:{hermes1:{status:'online',task:null},hermes2:{status:'online',task
         tasks:{pending:[],processing:[],done:[]},discussion:[],stats:{},collab:{nodes:{},activity:[],telemetry:{}},security:{},shared_tasks:{pending:[],processing:[],done:[]}};
 // Viewer token from ?token= (used when served behind a tunnel with K2_VIEW_TOKEN).
 var VIEW_TOKEN=(new URLSearchParams(location.search)).get('token')||'';
+var WRITE_TOKEN=(new URLSearchParams(location.search)).get('wt')||'';
 function authQuery(u){return VIEW_TOKEN?(u+(u.indexOf('?')>=0?'&':'?')+'token='+encodeURIComponent(VIEW_TOKEN)):u;}
+function writeQuery(u){var t=WRITE_TOKEN||VIEW_TOKEN;return t?(u+(u.indexOf('?')>=0?'&':'?')+'wt='+encodeURIComponent(t)):u;}
 var discussionEntries=[];
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 
@@ -305,7 +307,7 @@ function renderShared(){
 }
 function exportTask(id){
   if(!id)return;
-  fetch(authQuery('/api/collab/export'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:id})})
+  fetch(writeQuery('/api/collab/export'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:id})})
     .then(function(r){return r.json().then(function(d){return {ok:r.ok,data:d};});})
     .then(function(result){if(!result.ok)throw new Error(result.data.error||result.data.reason||'export failed');notify('TASK PUSHED TO SHARED · '+id,'good');refreshState();})
     .catch(function(err){notify(err.message,'bad');});
@@ -313,7 +315,7 @@ function exportTask(id){
 
 function adoptTask(id){
   if(!id)return;
-  fetch(authQuery('/api/collab/adopt'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:id})})
+  fetch(writeQuery('/api/collab/adopt'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:id})})
     .then(function(r){return r.json();})
     .then(function(d){if(d&&d.status==='ok'){refreshState();}else{}})
     .catch(function(){});
