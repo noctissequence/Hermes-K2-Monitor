@@ -68,9 +68,12 @@ BIND_HOST = os.environ.get("K2_BIND_HOST", "127.0.0.1")
 # Empty token (default) => viewer endpoints are REJECTED unless bound to loopback;
 # production behind a tunnel MUST set K2_VIEW_TOKEN and bind 0.0.0.0.
 VIEW_TOKEN = os.environ.get("K2_VIEW_TOKEN", "")
-# Optional write-tier token. When set, task-mutation endpoints (collab adopt/export)
-# require K2_WRITE_TOKEN instead of the read-only viewer token. When unset, write
-# falls back to viewer auth so the dashboard works standalone (viewer = write tier).
+# Write authentication for endpoints that cause the local agent to act on
+# mesh-sourced content (collab adopt/export). Optional shared secret for
+# automation/CI use. If unset, falls back to owner auth (mesh_auth
+# owner_token, which always exists — auto-generated on first run), NOT to
+# viewer auth. A viewer credential must never be sufficient to make the
+# local agent execute externally-sourced tasks.
 WRITE_TOKEN = os.environ.get("K2_WRITE_TOKEN", "")
 # Whether to trust X-Forwarded-For for rate limiting identity. Only enable when the
 # app is deliberately served behind a trusted proxy/CF tunnel that sets XFF.
@@ -411,27 +414,18 @@ def _view_allowed(request):
     return False
 
 
-def _write_authorized(request):
-    """True if the client proves knowledge of K2_WRITE_TOKEN (write tier)."""
-    if not WRITE_TOKEN:
-        return False
-    supplied = (request.headers.get("X-Write-Token")
-                or _bearer(request)
-                or request.query.get("wt"))
-    return secrets.compare_digest(supplied or "", WRITE_TOKEN)
-
-
 def _write_allowed(request):
-    """Gate for task-mutation endpoints (collab adopt/export).
-
-    If K2_WRITE_TOKEN is set, write access requires it (viewer token alone is
-    insufficient — closes the 'viewer can make local agent execute' blast
-    radius). If unset, write falls back to viewer auth so the dashboard keeps
-    working standalone.
-    """
+    """Gate for endpoints that cause local agent execution of mesh-sourced
+    content. K2_WRITE_TOKEN (if configured) is an accepted alternate
+    credential; otherwise this requires owner auth. Viewer auth is never
+    sufficient here, regardless of K2_VIEW_TOKEN configuration."""
     if WRITE_TOKEN:
-        return _write_authorized(request)
-    return _view_allowed(request)
+        supplied = (request.headers.get("X-Write-Token")
+                    or _bearer(request)
+                    or request.query.get("wt"))
+        if supplied and secrets.compare_digest(str(supplied), WRITE_TOKEN):
+            return True
+    return _owner_authorized(request)
 
 
 def _record_collab_activity(kind: str, **data):
@@ -733,10 +727,10 @@ def make_app():
 
     async def api_collab_adopt(request):
         # Copy a shared (collab) task into the local internal pending queue so the
-        # local agent can pick it up. Write-tier gate: task mutation reaches the
-        # local execution queue, so it must not ride the read-only viewer token.
+        # local agent can pick it up. This makes the agent execute mesh-sourced
+        # content, so it requires owner auth (or K2_WRITE_TOKEN) — never viewer.
         if not _write_allowed(request):
-            return _forbidden("write auth required")
+            return _forbidden("owner or write-token required")
         limited = _rate_limit(request, "collab-adopt")
         if limited:
             return limited
@@ -768,7 +762,7 @@ def make_app():
     async def api_collab_export(request):
         """Copy a local Hermes task into the shared mesh task vault."""
         if not _write_allowed(request):
-            return _forbidden("write auth required")
+            return _forbidden("owner or write-token required")
         limited = _rate_limit(request, "collab-export")
         if limited:
             return limited

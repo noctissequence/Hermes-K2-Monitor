@@ -343,7 +343,7 @@ class CollabCoreHTTPTests(AioHTTPTestCase):
         socket = await self.client.ws_connect("/ws")
         initial = await socket.receive_json()
         self.assertEqual(initial["type"], "init")
-        exported = await self.client.request("POST", "/api/collab/export", json={"task_id": "export-me"})
+        exported = await self.client.request("POST", "/api/collab/export", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"task_id": "export-me"})
         self.assertEqual(exported.status, 200)
         data = await exported.json()
         self.assertEqual(data["task"]["id"], "export-me")
