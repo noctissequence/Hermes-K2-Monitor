@@ -469,7 +469,7 @@ def _sentinel_status():
     # Deployments override via SENTINEL_LOG / SENTINEL_STATE env at runtime so
     # absolute server paths never appear in this public codebase.
     log_path = Path(os.environ.get("SENTINEL_LOG", "/var/log/service-watch.log"))
-    state_dir = Path(os.environ.get("SENTINEL_STATE", "service-watch"))
+    state_dir = Path(os.environ.get("SENTINEL_STATE", "/var/tmp/service-watch"))
     findings_path = state_dir / "hunter_state" / "findings.txt"
 
     last_mtime = 0.0
@@ -709,6 +709,9 @@ def make_app():
         # local agent can pick it up. Viewer-auth + loopback (same gate as state).
         if not _view_allowed(request):
             return _forbidden("viewer auth required")
+        limited = _rate_limit(request, "collab-adopt")
+        if limited:
+            return limited
         body = await _json_body(request)
         task_id = (body.get("task_id") or "").strip()
         if not task_id:
