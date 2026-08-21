@@ -139,10 +139,11 @@ body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:13p
   </div>
   <div class="panel legacy-panel tasks-wide">
     <div class="panel-head">TASKS <span class="stat" id="tasks-summary">0a / 0p / 0d</span></div>
-    <div class="panel-body" id="tasks-body" style="display:grid;grid-template-columns:1fr 1fr 1.3fr">
+    <div class="panel-body" id="tasks-body" style="display:grid;grid-template-columns:1fr 1fr 1.2fr 1.2fr">
       <div class="task-col"><h3>PENDING</h3><div id="col-pending"></div></div>
       <div class="task-col"><h3>ACTIVE</h3><div id="col-working"></div></div>
       <div class="task-col"><h3>DONE</h3><div id="col-done"></div></div>
+      <div class="task-col"><h3>SHARED <span class="stat" id="shared-count">0</span></h3><div id="col-shared"></div></div>
       <div class="task-col mob-combined" id="col-mobile" style="display:none;grid-column:1/-1;max-height:340px"><h3>ALL TASKS</h3><div id="col-mobile-list"></div></div>
     </div>
   </div>
@@ -233,7 +234,7 @@ body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:13p
 
 <script>
 var S={agents:{hermes1:{status:'online',task:null},hermes2:{status:'online',task:null}},
-        tasks:{pending:[],processing:[],done:[]},discussion:[],stats:{},collab:{nodes:{},activity:[],telemetry:{}},security:{}};
+        tasks:{pending:[],processing:[],done:[]},discussion:[],stats:{},collab:{nodes:{},activity:[],telemetry:{}},security:{},shared_tasks:{pending:[],processing:[],done:[]}};
 // Viewer token from ?token= (used when served behind a tunnel with K2_VIEW_TOKEN).
 var VIEW_TOKEN=(new URLSearchParams(location.search)).get('token')||'';
 function authQuery(u){return VIEW_TOKEN?(u+(u.indexOf('?')>=0?'&':'?')+'token='+encodeURIComponent(VIEW_TOKEN)):u;}
@@ -276,6 +277,7 @@ function render(){
     document.getElementById('m-ram-m').textContent=(S.health&&S.health.ram_used_mb)?Math.round(S.health.ram_used_mb/1024)+'G':' -';
   }
   renderTasks(S.tasks);
+  renderShared();
   var pending=(S.tasks.pending||[]).length,active=(S.tasks.processing||[]).length,done=(S.tasks.done||[]).length;
   if(document.getElementById('tasks-summary'))document.getElementById('tasks-summary').textContent=active+'a / '+pending+'p / '+done+'d';
   setText('today-done',S.stats&&S.stats.tasks_done_today||done);
@@ -285,6 +287,27 @@ function render(){
   renderCollab();
 }
 function fmtUp(s){if(!s)return'-';var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return(d?d+'d ':'')+h+'h '+m+'m';}
+
+function renderShared(){
+  var sh=S.shared_tasks||{};
+  var list=document.getElementById('col-shared');
+  if(!list)return;
+  setText('shared-count',((sh.pending||[]).length+(sh.processing||[]).length));
+  var items=(sh.pending||[]).concat(sh.processing||[]);
+  list.innerHTML=items.length?items.slice(0,30).map(function(t){
+    var adoptBtn='<button class="adopt-btn" data-id="'+esc(t.id||'')+'" type="button">COPY →</button>';
+    return '<div class="task-item pending"><div class="t">'+esc(t.title||t.id)+'</div><div class="s">'+adoptBtn+' <small>'+esc(t.status||'')+'</small></div></div>';
+  }).join(''):'<div class="mesh-meta" style="padding:8px;font-size:9px">No shared tasks.</div>';
+  var btns=list.querySelectorAll('.adopt-btn');
+  for(var i=0;i<btns.length;i++){btns[i].onclick=(function(id){return function(){adoptTask(id);};})(btns[i].getAttribute('data-id'));}
+}
+function adoptTask(id){
+  if(!id)return;
+  fetch(authQuery('/api/collab/adopt'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:id})})
+    .then(function(r){return r.json();})
+    .then(function(d){if(d&&d.status==='ok'){refreshState();}else{}})
+    .catch(function(){});
+}
 
 function renderCollab(){
   var c=S.collab||{}, audit=c.audit||{}, tele=c.telemetry||{}, nodes=c.nodes||{};
@@ -310,7 +333,7 @@ function setText(id,value){var el=document.getElementById(id);if(el)el.textConte
 function setWidth(id,value){var el=document.getElementById(id);if(el)el.style.width=Math.max(0,Math.min(100,Number(value)||0))+'%';}
 function setCollab(c){S.collab=c||S.collab;renderCollab();}
 function appendCollabActivity(item){if(!item)return;S.collab.activity=S.collab.activity||[];S.collab.activity.push(item);if(S.collab.activity.length>120)S.collab.activity=S.collab.activity.slice(-80);renderCollab();}
-function refreshState(){fetch(authQuery('/api/state')).then(function(r){return r.json();}).then(function(d){if(d&&d.agents)updateUI(d);if(d&&d.collab)setCollab(d.collab);}).catch(function(){});}
+function refreshState(){fetch(authQuery('/api/state')).then(function(r){return r.json();}).then(function(d){if(d&&d.agents)updateUI(d);if(d&&d.collab)setCollab(d.collab);if(d&&d.shared_tasks){S.shared_tasks=d.shared_tasks;renderShared();}}).catch(function(){});}
 
 function renderSecurity(){
   var s=S.security||{};

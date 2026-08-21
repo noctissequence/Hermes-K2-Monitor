@@ -495,10 +495,16 @@ def make_app():
         if not _view_allowed(request):
             return _forbidden("viewer auth required")
         scan_tasks(); update_agents()
+        shared = {}
+        try:
+            cs = collab_vault.collab_state()
+            shared = cs.get("tasks", {}) if isinstance(cs, dict) else {}
+        except Exception:
+            shared = {}
         return web.json_response({"agents": state["agents"], "tasks": state["tasks"],
                                   "discussion": state["discussion"],
                                   "health": state["health"], "stats": state["stats"],
-                                  "collab": _collab_status()})
+                                  "collab": _collab_status(), "shared_tasks": shared})
 
     async def api_security(request):
         if not _view_allowed(request):
@@ -639,6 +645,36 @@ def make_app():
             relay_client.forward("task", {"action": action, "task": saved})
         return web.json_response({"status": "ok", "task": saved, "ledger_id": entry["id"]})
 
+    async def api_collab_adopt(request):
+        # Copy a shared (collab) task into the local internal pending queue so the
+        # local agent can pick it up. Viewer-auth + loopback (same gate as state).
+        if not _view_allowed(request):
+            return _forbidden("viewer auth required")
+        body = await _json_body(request)
+        task_id = (body.get("task_id") or "").strip()
+        if not task_id:
+            return web.json_response({"error": "task_id required"}, status=400)
+        found = None
+        try:
+            cs = collab_vault.collab_state()
+            for bucket in ("pending", "processing", "done"):
+                for t in (cs.get("tasks", {}).get(bucket, []) if isinstance(cs, dict) else []):
+                    if str(t.get("id")) == task_id:
+                        found = dict(t, status="pending", assigned_to="")
+                        break
+                if found:
+                    break
+        except Exception:
+            return web.json_response({"error": "vault read failed"}, status=503)
+        if not found:
+            return web.json_response({"error": "task not found"}, status=404)
+        PENDING.mkdir(parents=True, exist_ok=True)
+        target = PENDING / f"{task_id}.json"
+        target.write_text(json.dumps(found, ensure_ascii=False, indent=2), encoding="utf-8")
+        scan_tasks(); update_agents()
+        broadcast({"type": "tasks_update", "data": state["tasks"]})
+        return web.json_response({"status": "ok", "task": found, "path": str(target.name)})
+
     async def api_collab_ledger(request):
         node_id = _node_authorized(request)
         if not node_id:
@@ -743,6 +779,7 @@ def make_app():
     app.router.add_post("/api/relay", api_relay)
     app.router.add_post("/api/collab/file", api_collab_file)
     app.router.add_post("/api/collab/task", api_collab_task)
+    app.router.add_post("/api/collab/adopt", api_collab_adopt)
     app.router.add_get("/api/collab/ledger", api_collab_ledger)
     app.router.add_post("/api/mesh/revoke/prepare", api_mesh_prepare_revoke)
     app.router.add_post("/api/mesh/revoke", api_mesh_revoke)
