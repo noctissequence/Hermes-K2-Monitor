@@ -50,7 +50,8 @@ The following new routes are available. Owner-only routes require `X-Collab-Owne
 | POST | `/api/collab/file` | signed node | Read/write only under `collab/{task_id}/`. |
 | POST | `/api/collab/task` | signed node | Create, claim, or complete a collab task. |
 | GET | `/api/collab/ledger` | signed node | Read a bounded ledger page with HMAC authentication. |
-| POST | `/api/mesh/revoke` | owner | Revoke a node and invalidate its tokens. |
+| POST | `/api/mesh/revoke/prepare` | owner | Issue a one-time 60-second mesh confirmation challenge. |
+| POST | `/api/mesh/revoke` | owner + mesh confirmation | Revoke a node and invalidate its tokens. |
 
 Run the backend security regression suite with:
 
@@ -96,6 +97,7 @@ All events: `{"type": string, "data": object, "timestamp": ISO}`
 | `health` | CPU / RAM / disk / uptime |
 | `discussion` | Live discussion entry |
 | `stats` | Derived task stats |
+| `collab_activity` | Realtime audit, node, rate-limit, and kill-switch activity |
 
 **Push a discussion entry** (WebSocket /ws or 8765):
 

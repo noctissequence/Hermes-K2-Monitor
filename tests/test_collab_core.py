@@ -44,6 +44,20 @@ class CollabCoreHTTPTests(AioHTTPTestCase):
         self.assertIn("tasks", data)
         self.assertIn("collab", data)
         self.assertIn("nodes", data["collab"])
+        self.assertIn("telemetry", data["collab"])
+        self.assertIn("activity", data["collab"])
+        self.assertIn("ca_fingerprint", data["collab"])
+
+    @unittest_run_loop
+    async def test_collab_activity_realtime_over_same_origin_websocket(self):
+        socket = await self.client.ws_connect("/ws")
+        initial = await socket.receive_json()
+        self.assertEqual(initial["type"], "init")
+        self.server_module._record_collab_activity("rate_limit", scope="test", identity="node", status=429)
+        event = await socket.receive_json(timeout=1)
+        self.assertEqual(event["type"], "collab_activity")
+        self.assertEqual(event["data"]["kind"], "rate_limit")
+        await socket.close()
 
     @unittest_run_loop
     async def test_invite_join_single_use_and_bad_code(self):
@@ -199,7 +213,14 @@ class CollabCoreHTTPTests(AioHTTPTestCase):
         joined = await self.client.request("POST", "/api/auth/join", json={"node_id": "n-revoke", "conn_code": invite["code"]})
         credentials = await joined.json()
         headers = {"Authorization": "Bearer " + credentials["token"]}
-        revoked = await self.client.request("POST", "/api/mesh/revoke", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-revoke"})
+        prepared = await self.client.request("POST", "/api/mesh/revoke/prepare", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-revoke"})
+        self.assertEqual(prepared.status, 200)
+        challenge = await prepared.json()
+        wrong_confirmation = await self.client.request("POST", "/api/mesh/revoke", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-revoke", "challenge": challenge["challenge"], "confirmation": "wrong", "mesh_confirmation": "wrong"})
+        self.assertEqual(wrong_confirmation.status, 400)
+        prepared = await self.client.request("POST", "/api/mesh/revoke/prepare", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-revoke"})
+        challenge = await prepared.json()
+        revoked = await self.client.request("POST", "/api/mesh/revoke", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-revoke", "challenge": challenge["challenge"], "confirmation": challenge["phrase"], "mesh_confirmation": "CONFIRM MESH REVOKE"})
         self.assertEqual(revoked.status, 200)
         denied = await self.client.request("GET", "/api/collab/ledger", headers=headers)
         self.assertEqual(denied.status, 403)
@@ -260,7 +281,10 @@ class CollabCoreHTTPTests(AioHTTPTestCase):
         tampered["node_id"] = "n-other"
         self.assertFalse(self.server_module.mesh_auth.identity.verify("n-persist", tampered))
 
-        revoked = await self.client.request("POST", "/api/mesh/revoke", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-persist"})
+        prepared = await self.client.request("POST", "/api/mesh/revoke/prepare", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-persist"})
+        self.assertEqual(prepared.status, 200)
+        challenge = await prepared.json()
+        revoked = await self.client.request("POST", "/api/mesh/revoke", headers={"X-Collab-Owner": TEST_OWNER_TOKEN}, json={"node_id": "n-persist", "challenge": challenge["challenge"], "confirmation": challenge["phrase"], "mesh_confirmation": "CONFIRM MESH REVOKE"})
         self.assertEqual(revoked.status, 200)
         restarted_vault = CollabVault(self.tmp.name)
         restarted_auth = MeshAuth(restarted_vault.auth_dir, restarted_vault)

@@ -86,6 +86,9 @@ state = {
     "stats": {"tasks_done_today": 0, "success_rate": 0, "avg_response_s": 0},
 }
 clients = set()
+collab_activity = []
+collab_telemetry = {"rate_limit_429": 0, "last_rate_limit_429": None}
+mesh_challenges = {}
 
 try:
     BOOT_TS = psutil.boot_time() if psutil else time.time()
@@ -184,8 +187,9 @@ def broadcast(payload):
     dead = []
     for ws in clients:
         try:
-            asyncio.create_task(ws.send(msg))
-        except (RuntimeError, TypeError, OSError):
+            sender = ws.send_str(msg) if hasattr(ws, "send_str") else ws.send(msg)
+            asyncio.create_task(sender)
+        except (AttributeError, RuntimeError, TypeError, OSError):
             dead.append(ws)
     for ws in dead:
         clients.discard(ws)
@@ -265,10 +269,54 @@ def _node_authorized(request):
     return mesh_auth.verify_token(_bearer(request))
 
 
+def _record_collab_activity(kind: str, **data):
+    item = {"kind": kind, "timestamp": now_iso(), **data}
+    collab_activity.append(item)
+    if len(collab_activity) > 160:
+        del collab_activity[:-120]
+    broadcast({"type": "collab_activity", "data": item, "timestamp": item["timestamp"]})
+    return item
+
+
+def _collab_activity_feed():
+    persisted = []
+    for entry in collab_vault.read_ledger(60):
+        persisted.append({
+            "kind": "audit",
+            "timestamp": entry.get("ts"),
+            "node_id": entry.get("node"),
+            "op": entry.get("op"),
+            "ledger_id": entry.get("id"),
+            "status": "verified",
+        })
+    transient = [item for item in collab_activity if item.get("kind") != "audit"]
+    return sorted(persisted + transient, key=lambda item: item.get("timestamp") or "")[-80:]
+
+
 def _collab_status(snapshot_data=None):
-    data = snapshot_data or collab_vault.collab_state()
+    data = dict(snapshot_data or collab_vault.collab_state())
     active = [node for node in data.get("nodes", {}).values() if node.get("status") == "active"]
     data["mesh_status"] = "CONNECTED" if active else "PARTITIONED"
+    enriched_nodes = {}
+    for node_id, node in data.get("nodes", {}).items():
+        cert = mesh_auth.identity.certificate(node_id)
+        enriched = dict(node)
+        enriched["certificate"] = {
+            "valid": mesh_auth.identity.verify(node_id, cert),
+            "expires_at": cert.get("expires_at") if cert else None,
+            "revoked": bool(cert and cert.get("revoked")),
+        }
+        enriched_nodes[node_id] = enriched
+    data["nodes"] = enriched_nodes
+    data["ca_fingerprint"] = mesh_auth.identity.ca_public_fingerprint
+    data["activity"] = _collab_activity_feed()
+    data["telemetry"] = {
+        "audit_entries": data.get("audit", {}).get("entries", 0),
+        "audit_verified": data.get("audit", {}).get("verified", False),
+        "audit_tampered": data.get("audit", {}).get("tampered", False),
+        "rate_limit_429": collab_telemetry["rate_limit_429"],
+        "last_rate_limit_429": collab_telemetry["last_rate_limit_429"],
+    }
     return data
 
 
@@ -292,6 +340,9 @@ def _rate_limit(request, scope: str, identity: str | None = None):
     decision = rate_limiter.check(bucket)
     if decision.allowed:
         return None
+    collab_telemetry["rate_limit_429"] += 1
+    collab_telemetry["last_rate_limit_429"] = now_iso()
+    _record_collab_activity("rate_limit", scope=scope, identity=identity or peer, status=429, retry_after=decision.retry_after)
     return web.json_response(
         {"error": "rate limit exceeded", "retry_after": decision.retry_after, "limit": decision.limit, "window_seconds": rate_limiter.window_seconds},
         status=429,
@@ -340,6 +391,7 @@ def make_app():
         except AuthError:
             return _forbidden("invalid or expired code")
         broadcast({"type": "collab_node", "data": {"node_id": result["node_id"], "status": "active"}, "timestamp": now_iso()})
+        _record_collab_activity("node", node_id=result["node_id"], status="active", certificate_expires_at=result.get("certificate", {}).get("expires_at"))
         return web.json_response(result)
 
     async def api_relay(request):
@@ -358,6 +410,7 @@ def make_app():
         except VaultError as exc:
             return web.json_response({"status": "rejected", "reason": str(exc)}, status=503)
         broadcast({"type": "collab_event", "data": entry, "timestamp": entry["ts"]})
+        _record_collab_activity("audit", node_id=entry["node"], op=entry["op"], ledger_id=entry["id"], status="verified")
         return web.json_response({"status": "ok", "relayed": True, "ledger_id": entry["id"]})
 
     async def api_collab_file(request):
@@ -388,6 +441,7 @@ def make_app():
                 except VaultError as exc:
                     return web.json_response({"status": "rejected", "reason": str(exc)}, status=503)
                 broadcast({"type": "collab_event", "data": entry, "timestamp": entry["ts"]})
+                _record_collab_activity("audit", node_id=entry["node"], op=entry["op"], ledger_id=entry["id"], status="verified")
                 return web.json_response({"status": "ok", "path": written, "ledger_id": entry["id"]})
             return web.json_response({"error": "action must be read or write"}, status=400)
         except VaultError:
@@ -430,6 +484,7 @@ def make_app():
         except VaultError as exc:
             return web.json_response({"status": "rejected", "reason": str(exc)}, status=503)
         broadcast({"type": "collab_event", "data": entry, "timestamp": entry["ts"]})
+        _record_collab_activity("audit", node_id=entry["node"], op=entry["op"], ledger_id=entry["id"], status="verified")
         return web.json_response({"status": "ok", "task": saved, "ledger_id": entry["id"]})
 
     async def api_collab_ledger(request):
@@ -458,24 +513,48 @@ def make_app():
             return web.json_response({"status": "rejected", "reason": reason}, status=403)
         return web.json_response({"ledger": collab_vault.read_ledger(limit), "state": _collab_status()})
 
-    async def api_mesh_revoke(request):
-        limited = _rate_limit(request, "mesh-revoke")
+    async def api_mesh_prepare_revoke(request):
+        limited = _rate_limit(request, "mesh-revoke-prepare")
         if limited:
             return limited
         if not _owner_authorized(request):
             return _forbidden()
         body = await _json_body(request)
         node_id = body.get("node_id")
-        if not isinstance(node_id, str):
-            return web.json_response({"error": "node_id required"}, status=400)
+        node = collab_vault.collab_state().get("nodes", {}).get(node_id) if isinstance(node_id, str) else None
+        if not node:
+            return web.json_response({"error": "node not found"}, status=404)
+        challenge = secrets.token_urlsafe(18)
+        phrase = f"REVOKE {node_id}"
+        mesh_challenges[challenge] = {"node_id": node_id, "phrase": phrase, "expires_at": time.time() + 60}
+        _record_collab_activity("kill_switch", node_id=node_id, status="challenge_issued")
+        return web.json_response({"status": "challenge_issued", "challenge": challenge, "phrase": phrase, "expires_in": 60})
+
+    async def api_mesh_revoke(request):
+        limited = _rate_limit(request, "mesh-revoke-confirm")
+        if limited:
+            return limited
+        if not _owner_authorized(request):
+            return _forbidden()
+        body = await _json_body(request)
+        challenge = body.get("challenge")
+        record = mesh_challenges.pop(challenge, None) if isinstance(challenge, str) else None
+        if not record or record["expires_at"] < time.time() or record["node_id"] != body.get("node_id"):
+            return _forbidden("invalid or expired mesh challenge")
+        if body.get("confirmation") != record["phrase"] or body.get("mesh_confirmation") != "CONFIRM MESH REVOKE":
+            return web.json_response({"error": "mesh confirmation mismatch"}, status=400)
+        node_id = record["node_id"]
         if not mesh_auth.revoke_node(node_id):
             return web.json_response({"error": "node not found"}, status=404)
         broadcast({"type": "collab_node", "data": {"node_id": node_id, "status": "revoked"}, "timestamp": now_iso()})
+        _record_collab_activity("kill_switch", node_id=node_id, status="revoked")
         return web.json_response({"status": "ok", "revoked": node_id})
 
     async def aio_ws(request):
         ws = web.WebSocketResponse(autoping=True)
         await ws.prepare(request)
+        clients.add(ws)
+        await ws.send_json(snapshot())
         try:
             async for raw in ws:
                 try:
@@ -491,6 +570,8 @@ def make_app():
                                "timestamp": entry["timestamp"]})
         except Exception:
             logger.info("Aiohttp websocket client disconnected or failed", exc_info=True)
+        finally:
+            clients.discard(ws)
         return ws
 
     app.router.add_get("/", index)
@@ -502,6 +583,7 @@ def make_app():
     app.router.add_post("/api/collab/file", api_collab_file)
     app.router.add_post("/api/collab/task", api_collab_task)
     app.router.add_get("/api/collab/ledger", api_collab_ledger)
+    app.router.add_post("/api/mesh/revoke/prepare", api_mesh_prepare_revoke)
     app.router.add_post("/api/mesh/revoke", api_mesh_revoke)
     app.router.add_get("/ws", aio_ws)
     return app

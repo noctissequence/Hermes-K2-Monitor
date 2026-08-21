@@ -31,13 +31,23 @@ class SQLiteRateLimiter:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path, timeout=10, isolation_level=None)
         connection.execute("PRAGMA busy_timeout=10000")
-        connection.execute("PRAGMA journal_mode=WAL")
         return connection
 
     def _init_db(self) -> None:
-        with self._connect() as connection:
-            connection.execute("CREATE TABLE IF NOT EXISTS rate_hits (bucket TEXT NOT NULL, hit_at REAL NOT NULL)")
-            connection.execute("CREATE INDEX IF NOT EXISTS idx_rate_hits_bucket_time ON rate_hits(bucket, hit_at)")
+        last_error = None
+        for attempt in range(20):
+            try:
+                with self._connect() as connection:
+                    connection.execute("PRAGMA journal_mode=WAL")
+                    connection.execute("CREATE TABLE IF NOT EXISTS rate_hits (bucket TEXT NOT NULL, hit_at REAL NOT NULL)")
+                    connection.execute("CREATE INDEX IF NOT EXISTS idx_rate_hits_bucket_time ON rate_hits(bucket, hit_at)")
+                return
+            except sqlite3.OperationalError as exc:
+                last_error = exc
+                if "locked" not in str(exc).lower():
+                    raise
+                time.sleep(0.025 * (attempt + 1))
+        raise sqlite3.OperationalError("rate limiter database remained locked during initialization") from last_error
 
     def check(self, bucket: str, now: float | None = None) -> RateLimitDecision:
         if not isinstance(bucket, str) or not bucket:
