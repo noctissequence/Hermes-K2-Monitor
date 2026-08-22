@@ -19,7 +19,7 @@ info(){ echo -e "${GRN}[+]${NC} $*"; }
 warn(){ echo -e "${YLW}[!]${NC} $*"; }
 err(){  echo -e "${RED}[x]${NC} $*" >&2; }
 
-REPO_URL="https://github.com/github-owner/Hermes-K2-Monitor.git"
+REPO_URL="https://github.com/noctissequence/Hermes-K2-Monitor.git"
 APP_DIR="${HERMES_MESH_DIR:-/opt/hermes-k2-monitor}"
 GATEWAY_PORT="${K2_HTTP_PORT:-8766}"
 
