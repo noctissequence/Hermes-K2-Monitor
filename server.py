@@ -115,6 +115,8 @@ VIEWER_ACCESS_PATH = collab_vault.auth_dir / "viewer_access.jsonl"
 # relay remains the automatic fallback for partners whose link is down.
 ws_relay_clients: dict[str, WSRelayClient] = {}
 WS_LINK_ENABLED = os.environ.get("K2_WS_LINK", "1") != "0"
+WS_RELAY_MAX_CONNS_PER_NODE = int(os.environ.get("K2_WS_MAX_CONNS", "3"))
+ws_relay_conns: dict[str, int] = {}  # peer_node_id -> active WS relay connection count
 
 
 def _make_ws_client(url: str, node_id: str, token: str, trust) -> WSRelayClient:
@@ -148,19 +150,22 @@ def _sign_envelope(trust, node_id: str, op: str, payload: dict) -> dict:
 
 
 def _relay_forward(op: str, payload: dict) -> bool:
-    """Forward an event to partners: over any live WS link, else HTTP fallback."""
+    """Forward an event to partners: each live WS link gets it; any partner
+    whose WS link is down falls back to the HTTP relay so coverage is per-link,
+    not all-or-nothing."""
     delivered = False
     for url, client in list(ws_relay_clients.items()):
         try:
             if client.connected:
                 delivered = client.send(op, payload) or delivered
-        except Exception:  # noqa: BLE001 - a broken link never blocks the fallback
+            elif relay_client.ready():
+                # this partner's WS link is down -> HTTP fallback for it
+                relay_client.forward(op, payload)
+        except Exception:  # noqa: BLE001 - a broken link never blocks others
             logger.debug("ws link forward failed to %s", url, exc_info=True)
-    if not delivered and relay_client.ready():
-        try:
-            relay_client.forward(op, payload)
-        except Exception:  # noqa: BLE001
-            logger.debug("http relay fallback failed", exc_info=True)
+    if not ws_relay_clients and relay_client.ready():
+        # no WS links configured at all -> pure HTTP relay path
+        relay_client.forward(op, payload)
     return delivered
 
 # ---------------- state ----------------
@@ -989,6 +994,14 @@ def make_app():
             if not peer_node_id or (isinstance(claimed, str) and claimed != peer_node_id):
                 await ws.close(code=1008, message=b"unauthorized")
                 return ws
+            # Cap concurrent WS relay connections per peer to bound resource use
+            # (a node that is compromised/glitchy must not exhaust FDs/memory by
+            # opening many authenticated WS connections at once).
+            current = ws_relay_conns.get(peer_node_id, 0)
+            if current >= WS_RELAY_MAX_CONNS_PER_NODE:
+                await ws.close(code=1013, message=b"too many connections")
+                return ws
+            ws_relay_conns[peer_node_id] = current + 1
             await ws.send_str(json.dumps({"status": "ok"}))
 
             # 2) signed event stream
@@ -1024,7 +1037,13 @@ def make_app():
         except Exception:
             logger.info("ws relay link ended or failed", exc_info=True)
         finally:
-            pass
+            # release our slot when the connection closes (only if we ever auth'd)
+            if peer_node_id:
+                remaining = ws_relay_conns.get(peer_node_id, 0) - 1
+                if remaining > 0:
+                    ws_relay_conns[peer_node_id] = remaining
+                else:
+                    ws_relay_conns.pop(peer_node_id, None)
         await ws.close()
         return ws
 
