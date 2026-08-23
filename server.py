@@ -715,8 +715,12 @@ def make_app():
             return web.json_response({"status": "rejected", "reason": str(exc)}, status=503)
         broadcast({"type": "collab_event", "data": entry, "timestamp": entry["ts"]})
         _record_collab_activity("audit", node_id=entry["node"], op=entry["op"], ledger_id=entry["id"], status="verified")
-        # best-effort replicate to partner VPS (WS link preferred, HTTP fallback)
-        _relay_forward(body.get("op", "message"), body.get("payload", {}))
+        # best-effort replicate to partner VPS (WS link preferred, HTTP fallback).
+        # Event sudah masuk ledger; kegagalan relay TIDAK membuat request gagal.
+        try:
+            _relay_forward(body.get("op", "message"), body.get("payload", {}))
+        except Exception:  # noqa: BLE001 - relay failure never fails the request
+            pass
         return web.json_response({"status": "ok", "relayed": True, "ledger_id": entry["id"]})
 
     async def api_collab_file(request):
@@ -800,7 +804,10 @@ def make_app():
         broadcast({"type": "collab_event", "data": entry, "timestamp": entry["ts"]})
         _record_collab_activity("audit", node_id=entry["node"], op=entry["op"], ledger_id=entry["id"], status="verified")
         if relay_client.ready():
-            relay_client.forward("task", {"action": action, "task": saved})
+            try:
+                relay_client.forward("task", {"action": action, "task": saved})
+            except Exception:  # noqa: BLE001 - partner forward never fails the request
+                pass
         return web.json_response({"status": "ok", "task": saved, "ledger_id": entry["id"]})
 
     async def api_collab_adopt(request):
