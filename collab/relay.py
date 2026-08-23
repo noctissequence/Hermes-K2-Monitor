@@ -22,12 +22,15 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, TYPE_CHECKING
 
 try:
     import aiohttp
 except ImportError:  # pragma: no cover
     aiohttp = None
+
+if TYPE_CHECKING:
+    from aiohttp import ClientSession as _ClientSession
 
 from .trust import ALLOWED_OPS, TrustManager
 
@@ -35,7 +38,7 @@ logger = logging.getLogger("k2.relay")
 
 DEFAULT_FORWARD_TIMEOUT = 8.0        # per-partner request timeout (s)
 DEFAULT_MAX_RETRY = 3                 # consecutive failures before breaker
-DEFAULT_BREAK_SECONDS = 60.0          # peer ignored after breaker trips
+DEFAULT_BREAK_SECONDS = 15.0          # peer ignored after breaker trips (exponential backoff up to 16x)
 DEFAULT_MAX_QUEUE = 500               # in-memory pending forward cap
 
 
@@ -85,6 +88,7 @@ class RelayClient:
         self._failure: dict[str, tuple[float, int]] = {}   # url -> (breaker_until, fails)
         self._queue: list[dict[str, Any]] = []             # pending signed messages
         self._queue_cap = max_queue
+        self._session: Optional[_ClientSession] = None  # persistent outbound session
 
     # -- public ------------------------------------------------------------
     def ready(self) -> bool:
@@ -118,6 +122,46 @@ class RelayClient:
 
     def queue_depth(self) -> int:
         return len(self._queue)
+
+    async def _get_session(self) -> _ClientSession:
+        """Return a persistent aiohttp session, creating one if needed.
+        Reusing a single session avoids TCP/TLS re-handshake on every POST,
+        which is the main latency win for frequent relay forwards."""
+        if aiohttp is None:  # pragma: no cover
+            raise RelayForwardError("aiohttp unavailable")
+        if self._session is None or self._session.closed:
+            connector = aiohttp.TCPConnector(limit_per_host=4, ttl_dns_cache=300)
+            self._session = aiohttp.ClientSession(connector=connector)
+        return self._session
+
+    async def close(self) -> None:
+        """Release the persistent session (graceful shutdown)."""
+        if self._session is not None and not getattr(self._session, "closed", True):
+            await self._session.close()
+            self._session = None
+
+    async def drain_loop(self, interval: float = 15.0) -> None:
+        """Periodically retry queued forwards that failed against a partner,
+        so no verified event is permanently lost — it is delivered once the
+        partner is reachable again."""
+        while True:
+            await asyncio.sleep(interval)
+            if not self._queue:
+                continue
+            pending, self._queue = self._queue, []
+            for message in pending:
+                partner_ok = False
+                for url in list(self.partners):
+                    if not self._available(url):
+                        continue
+                    try:
+                        if await self._post_async(url, message):
+                            partner_ok = True
+                            break
+                    except (OSError, RuntimeError, ValueError, TimeoutError):
+                        continue
+                if not partner_ok:
+                    self._queue_safe(message)  # requeue if still all failed
 
     # -- internals ---------------------------------------------------------
     def _loop_running(self) -> bool:
@@ -169,7 +213,13 @@ class RelayClient:
     def _mark_fail(self, url: str) -> None:
         info = self._failure.get(url, (0.0, 0))
         fails = info[1] + 1
-        until = time_now() + self.break_seconds if fails >= self.max_retry else 0.0
+        # exponential backoff after the breaker trips: open longer the more
+        # consecutive failures, capped so a healthy restart recovers fast.
+        base = self.break_seconds
+        if fails >= self.max_retry:
+            until = time_now() + min(base * 16, base * (2 ** (fails - self.max_retry)))
+        else:
+            until = 0.0
         self._failure[url] = (until, fails)
 
     def _queue_safe(self, message: dict[str, Any]) -> None:
@@ -214,12 +264,13 @@ class RelayClient:
             "Authorization": f"Bearer {self.local_node_token or 'x'}",
         }
         try:
-            async with aiohttp.ClientSession() as session, session.post(
+            session = await self._get_session()
+            async with session.post(
                 f"{url}/api/relay", json=message, headers=headers, timeout=aiohttp.ClientTimeout(total=self.timeout)
             ) as resp:
-                    ok = 200 <= resp.status < 300
-                    self._mark_ok(url) if ok else self._mark_fail(url)
-                    return ok
+                ok = 200 <= resp.status < 300
+                self._mark_ok(url) if ok else self._mark_fail(url)
+                return ok
         except Exception as exc:  # noqa: BLE001
             logger.warning("relay forward to %s failed: %s", url, exc)
             self._mark_fail(url)

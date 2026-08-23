@@ -910,7 +910,12 @@ def make_app():
     return app
 
 async def http_server():
-    runner = web.AppRunner(make_app())
+    async def _on_shutdown(_app):
+        if aiohttp is not None:
+            await relay_client.close()
+    app = make_app()
+    app.on_cleanup.append(_on_shutdown)
+    runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, BIND_HOST, HTTP_PORT)
     await site.start()
@@ -925,8 +930,12 @@ def main():
     if aiohttp is not None:
         tasks.append(http_server())
     print(f"[k2-monitor] Hermes K2 Monitor\n  WS  : ws://{BIND_HOST}:{WS_PORT}\n  HTTP: http://{BIND_HOST}:{HTTP_PORT}\n  shared: {SHARED}", flush=True)
+    loop = asyncio.get_event_loop()
+    # drain the relay retry queue in the background while serving
+    if aiohttp is not None:
+        asyncio.ensure_future(relay_client.drain_loop())
     try:
-        asyncio.get_event_loop().run_until_complete(asyncio.gather(*tasks))
+        loop.run_until_complete(asyncio.gather(*tasks))
     except KeyboardInterrupt:
         pass
 
