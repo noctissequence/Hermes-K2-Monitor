@@ -643,7 +643,8 @@ def make_app():
     async def index(request):
         if FRONTEND.exists():
             text = FRONTEND.read_text(encoding="utf-8")
-            return web.Response(text=text, content_type="text/html", charset="utf-8")
+            return web.Response(text=text, content_type="text/html", charset="utf-8",
+                                headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
         return web.Response(text="Hermes K2 Monitor: frontend missing", status=501)
 
     async def api_state(request):
