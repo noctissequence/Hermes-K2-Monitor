@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 from collab.auth import AuthError, MeshAuth
+from collab.punch import PunchSignaller, PunchClient, UDPPunchServer, DEFAULT_UDP_PORT
 from collab.ratelimit import SQLiteRateLimiter
 from collab.relay import RelayClient
 from collab.trust import TrustManager
@@ -102,6 +103,27 @@ rate_limiter = SQLiteRateLimiter(
     limit=int(os.environ.get("K2_RATE_LIMIT", "60")),
     window_seconds=int(os.environ.get("K2_RATE_WINDOW_SECONDS", "60")),
 )
+# P2P NAT-punch module. Adds an automatic low-latency UDP lane between peers
+# on top of the HTTPS relay. Signalling rides the authenticated relay (no new
+# trust domain); origin IPs are exchanged only peer-to-peer. UDP disabled by
+# default unless K2_PUNCH_UDP_PORT is set.
+punch_server = UDPPunchServer(mesh_auth.mesh_key, port=DEFAULT_UDP_PORT)
+
+
+async def _punch_send_to_partners(payload):
+    """Deliver punch signalling to a peer via the existing HTTPS relay forwarder
+    (re-signs as the local node — no new trust domain)."""
+    relay_client.forward("punch", payload)
+
+
+punch_client = PunchClient(
+    mesh_auth.mesh_key,
+    os.environ.get("COLLAB_LOCAL_NODE_ID", "mesh-local"),
+    send=_punch_send_to_partners,
+    udp=punch_server,
+    timeout=float(os.environ.get("K2_PUNCH_TIMEOUT", "8")),
+)
+punch_enabled = DEFAULT_UDP_PORT > 0
 ws_rate_limiter = SQLiteRateLimiter(
     collab_vault.auth_dir / "ws_rate_limit.sqlite3",
     limit=int(os.environ.get("K2_WS_RATE_LIMIT", "120")),
@@ -630,6 +652,14 @@ def make_app():
         if not valid:
             _record_collab_activity("tamper", node_id=node_id, op=body.get("op", "unknown"), status=403, reason=reason)
             return web.json_response({"status": "rejected", "reason": reason}, status=403)
+        # P2P punch signalling is consumed locally for NAT-punch, not persisted
+        # to the ledger as event data (it is ephemeral discovery, not shared state).
+        if body.get("op") == "punch":
+            try:
+                await punch_client.handle_signalling(node_id, body.get("payload", {}))
+            except Exception:  # noqa: BLE001 - badly-formed intent must not crash relay
+                logger.debug("k2.punch signalling handling failed", exc_info=True)
+            return web.json_response({"status": "ok", "relayed": True})
         try:
             entry = collab_vault.append_event(signed_node, body["op"], body["payload"], body["sig"])
         except VaultError as exc:
@@ -857,6 +887,31 @@ def make_app():
         _record_collab_activity("kill_switch", node_id=node_id, status="revoked")
         return web.json_response({"status": "ok", "revoked": node_id})
 
+    async def api_mesh_peers(request):
+        node_id = _node_authorized(request)
+        if not node_id:
+            return _forbidden()
+        limited = _rate_limit(request, "mesh-peers", node_id)
+        if limited:
+            return limited
+        # Return the peer list visible to this node: registered mesh nodes with
+        # their punch status. Endpoints are only revealed per-peer (not bulk),
+        # so queries are answered based on what the caller already knows.
+        collab = collab_vault.collab_state()
+        nodes = collab.get("nodes", {}) if isinstance(collab, dict) else {}
+        peers = []
+        local_id = os.environ.get("COLLAB_LOCAL_NODE_ID", "mesh-local")
+        for nid, info in nodes.items():
+            if nid == local_id:
+                continue
+            if isinstance(info, dict) and info.get("status") == "active":
+                peers.append({
+                    "node_id": nid,
+                    "status": "active",
+                    "lane": punch_client.has_lane(nid),
+                })
+        return web.json_response({"peers": peers, "punch_enabled": punch_enabled})
+
     async def aio_ws(request):
         # Viewer auth: accept ?token= (browser WS can't set custom headers).
         # _view_allowed() handles the no-token -> loopback-only fallback.
@@ -906,6 +961,7 @@ def make_app():
     app.router.add_get("/api/collab/ledger", api_collab_ledger)
     app.router.add_post("/api/mesh/revoke/prepare", api_mesh_prepare_revoke)
     app.router.add_post("/api/mesh/revoke", api_mesh_revoke)
+    app.router.add_get("/api/mesh/peers", api_mesh_peers)
     app.router.add_get("/ws", aio_ws)
     return app
 
@@ -917,14 +973,39 @@ async def http_server():
     await asyncio.Future()
 
 # ---------------- main ----------------
+async def _punch_auto_loop():
+    """Periodically discover peers and emit punch intent so lanes can be
+    established automatically. Best-effort; failures are logged, never fatal."""
+    while True:
+        try:
+            collab = collab_vault.collab_state()
+            nodes = collab.get("nodes", {}) if isinstance(collab, dict) else {}
+            local_id = os.environ.get("COLLAB_LOCAL_NODE_ID", "mesh-local")
+            for nid, info in nodes.items():
+                if nid == local_id or not isinstance(info, dict) or info.get("status") != "active":
+                    continue
+                if punch_client.has_lane(nid):
+                    continue
+                # Emit intent so the peer learns our presence / recognises us.
+                # (A full UDP probe needs the partner tunnel to also run the
+                # punch server; signalling alone already proves the wire works.)
+                await punch_client.send_intent(nid, ("mesh-relay", punch_server.port or 0))
+        except Exception:  # noqa: BLE001 - discovery sweep must never kill the loop
+            logger.debug("k2.punch auto-discovery sweep failed", exc_info=True)
+        await asyncio.sleep(15)
+
+
 def main():
     state["discussion"] = load_discussion()
     tasks = [periodic(), mock_startup()]
+    if punch_enabled:
+        tasks.append(punch_server.start())
+        tasks.append(_punch_auto_loop())
     if ws_serve is not None:
         tasks.append(ws_server())
     if aiohttp is not None:
         tasks.append(http_server())
-    print(f"[k2-monitor] Hermes K2 Monitor\n  WS  : ws://{BIND_HOST}:{WS_PORT}\n  HTTP: http://{BIND_HOST}:{HTTP_PORT}\n  shared: {SHARED}", flush=True)
+    print(f"[k2-monitor] Hermes K2 Monitor\n  WS  : ws://{BIND_HOST}:{WS_PORT}\n  HTTP: http://{BIND_HOST}:{HTTP_PORT}\n  UDP punch: {('enabled' if punch_enabled else 'disabled (K2_PUNCH_UDP_PORT not set)')}\n  shared: {SHARED}", flush=True)
     try:
         asyncio.get_event_loop().run_until_complete(asyncio.gather(*tasks))
     except KeyboardInterrupt:

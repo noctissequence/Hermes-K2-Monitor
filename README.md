@@ -56,6 +56,7 @@ The following new routes are available. Owner-only routes require `X-Collab-Owne
 | GET | `/api/collab/ledger` | signed node | Read a bounded ledger page with HMAC authentication. |
 | POST | `/api/mesh/revoke/prepare` | owner | Issue a one-time 60-second mesh confirmation challenge. |
 | POST | `/api/mesh/revoke` | owner + mesh confirmation | Revoke a node and invalidate its tokens. |
+| GET | `/api/mesh/peers` | signed node | List active peers + their P2P lane status. |
 
 ## Cross-VPS relay (Opsi B — partner forwarding)
 
@@ -69,8 +70,10 @@ COLLAB_PARTNER_URLS=https://relay-a.example.com,https://relay-b.example.com
 # identitas lokal yang dipakai buat re-sign + Bearer auth ke partner (wajib terdaftar/<-join di partner)
 COLLAB_LOCAL_NODE_ID=n7f2a9
 COLLAB_LOCAL_NODE_TOKEN=<rotating token node yang udah join ke partner>
-# opsional
+# optional
 COLLAB_RELAY_TIMEOUT=8
+# P2P NAT-punch (auto low-latency UDP lane); 0 disables. Default 8767.
+K2_PUNCH_UDP_PORT=8767
 ```
 
 Tanpa `COLLAB_PARTNER_URLS`, `RelayClient` jadi no-op (`ready()=False`) — relay lokal tidak terpengaruh. Per-partner ada circuit breaker (3 gagal → isolasi 60s) dan bounded in-memory retry queue. Partner yang offline tidak menggagalkan relay lokal (best-effort).
