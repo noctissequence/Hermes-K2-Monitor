@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-ALLOWED_OPS = {"message", "task", "file_update", "broadcast", "join", "punch"}
+ALLOWED_OPS = {"message", "task", "file_update", "broadcast", "join"}
 FORBIDDEN_KEY_TERMS = {"api_key", "apikey", "secret", "password", "private_key", "env", "hostname", "email", "internal_ip"}
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 

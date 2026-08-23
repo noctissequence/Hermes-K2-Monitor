@@ -23,17 +23,15 @@ REPO_URL="https://github.com/noctissequence/Hermes-K2-Monitor.git"
 APP_DIR="${HERMES_MESH_DIR:-/opt/hermes-k2-monitor}"
 GATEWAY_PORT="${K2_HTTP_PORT:-8766}"
 
-usage(){ echo "Usage: $0 --mesh-key <hex32> [--partner <url>] [--dir <path>] [--punch-port <udp>]"; exit 1; }
+usage(){ echo "Usage: $0 --mesh-key <hex32> [--partner <url>] [--dir <path>]"; exit 1; }
 
 MESH_KEY=""
 PARTNERS=""
-PUNCH_PORT="8767"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mesh-key) MESH_KEY="$2"; shift 2 ;;
     --partner)  PARTNERS="${PARTNERS:+$PARTNERS,}$2"; shift 2 ;;
     --dir)      APP_DIR="$2"; shift 2 ;;
-    --punch-port) PUNCH_PORT="$2"; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -71,7 +69,6 @@ MESH_KEY=$MESH_KEY
 COLLAB_DIR=$APP_DIR/collab
 K2_BIND_HOST=127.0.0.1
 K2_HTTP_PORT=$GATEWAY_PORT
-K2_PUNCH_UDP_PORT=$PUNCH_PORT
 EOF
 [[ -n "$PARTNERS" ]] && echo "COLLAB_PARTNER_URLS=$PARTNERS" >> "$ENV_FILE"
 chmod 600 "$ENV_FILE"
