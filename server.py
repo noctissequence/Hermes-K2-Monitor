@@ -27,6 +27,7 @@ from collab.ratelimit import SQLiteRateLimiter
 from collab.relay import RelayClient
 from collab.trust import TrustManager
 from collab.vault import CollabVault, VaultError
+from collab.wsrelay import WSRelayClient
 
 logger = logging.getLogger("hermes-k2-monitor")
 
@@ -108,6 +109,59 @@ ws_rate_limiter = SQLiteRateLimiter(
     window_seconds=int(os.environ.get("K2_WS_RATE_WINDOW_SECONDS", "60")),
 )
 VIEWER_ACCESS_PATH = collab_vault.auth_dir / "viewer_access.jsonl"
+
+# Persistent WS relay links: partner_base_url -> WSRelayClient. When a link is
+# up, event forwards travel over it (streaming, low latency); the HTTP POST
+# relay remains the automatic fallback for partners whose link is down.
+ws_relay_clients: dict[str, WSRelayClient] = {}
+WS_LINK_ENABLED = os.environ.get("K2_WS_LINK", "1") != "0"
+
+
+def _make_ws_client(url: str, node_id: str, token: str, trust) -> WSRelayClient:
+    return WSRelayClient(
+        url,
+        node_id,
+        token,
+        signer=lambda op, payload, _trust=trust, _nid=node_id: _sign_envelope(_trust, _nid, op, payload),
+    )
+
+
+def _spawn_ws_links():
+    """Dial one persistent outbound WS link per configured partner."""
+    if not aiohttp or not WS_LINK_ENABLED or not relay_client.partners:
+        return
+    local_id = os.environ.get("COLLAB_LOCAL_NODE_ID", "mesh-local")
+    local_token = os.environ.get("COLLAB_LOCAL_NODE_TOKEN", "")
+    for url in list(relay_client.partners):
+        if url in ws_relay_clients:
+            continue
+        client = _make_ws_client(url, local_id, local_token, mesh_trust)
+        ws_relay_clients[url] = client
+        client.start()
+
+
+def _sign_envelope(trust, node_id: str, op: str, payload: dict) -> dict:
+    try:
+        return trust.sign(node_id, op, payload)
+    except Exception:  # noqa: BLE001 - malformed op never takes a link down
+        return {}
+
+
+def _relay_forward(op: str, payload: dict) -> bool:
+    """Forward an event to partners: over any live WS link, else HTTP fallback."""
+    delivered = False
+    for url, client in list(ws_relay_clients.items()):
+        try:
+            if client.connected:
+                delivered = client.send(op, payload) or delivered
+        except Exception:  # noqa: BLE001 - a broken link never blocks the fallback
+            logger.debug("ws link forward failed to %s", url, exc_info=True)
+    if not delivered and relay_client.ready():
+        try:
+            relay_client.forward(op, payload)
+        except Exception:  # noqa: BLE001
+            logger.debug("http relay fallback failed", exc_info=True)
+    return delivered
 
 # ---------------- state ----------------
 state = {
@@ -541,6 +595,17 @@ def _forbidden(reason="forbidden"):
     return web.json_response({"error": reason}, status=403)
 
 
+def _rate_limit_ws(identity: str) -> bool:
+    """Rate-limit an authenticated WS relay peer; returns True when over limit."""
+    bucket = f"wsrelay:{identity}"
+    decision = ws_rate_limiter.check(bucket)
+    if decision.allowed:
+        return False
+    collab_telemetry["rate_limit_429"] += 1
+    _record_collab_activity("rate_limit", scope="wsrelay", identity=identity, status=429, retry_after=decision.retry_after)
+    return True
+
+
 def _rate_limit(request, scope: str, identity: str | None = None):
     peer = identity or _client_ip(request)
     bucket = f"{scope}:{peer}"
@@ -636,9 +701,8 @@ def make_app():
             return web.json_response({"status": "rejected", "reason": str(exc)}, status=503)
         broadcast({"type": "collab_event", "data": entry, "timestamp": entry["ts"]})
         _record_collab_activity("audit", node_id=entry["node"], op=entry["op"], ledger_id=entry["id"], status="verified")
-        # best-effort replicate to partner VPS
-        if relay_client.ready():
-            relay_client.forward(body.get("op", "message"), body.get("payload", {}))
+        # best-effort replicate to partner VPS (WS link preferred, HTTP fallback)
+        _relay_forward(body.get("op", "message"), body.get("payload", {}))
         return web.json_response({"status": "ok", "relayed": True, "ledger_id": entry["id"]})
 
     async def api_collab_file(request):
@@ -892,6 +956,78 @@ def make_app():
             clients.discard(ws)
         return ws
 
+    async def api_ws_relay(request):
+        """Persistent inbound relay from a peer node (outbound dial from their side).
+
+        Auth: the FIRST frame must be {type:'auth', node_id, token}. The token is
+        validated against MeshAuth (same identity binding as _node_authorized on
+        HTTP routes) and the peer's node_id is pinned to this connection. Every
+        later frame must be a valid signed envelope (HMAC+nonce+ts) for that
+        node_id; anything else is dropped. Events pass through the exact same
+        verify -> ledger -> broadcast -> forward pipeline as HTTP relay.
+        """
+        ws = web.WebSocketResponse(heartbeat=30, max_msg_size=1 << 20)
+        await ws.prepare(request)
+        peer_node_id: str | None = None
+        try:
+            # 1) auth handshake (first frame only)
+            first = await asyncio.wait_for(ws.receive(), timeout=10)
+            if first.type != aiohttp.WSMsgType.TEXT or not first.data:
+                await ws.close(code=1008, message=b"auth required")
+                return ws
+            try:
+                auth = json.loads(first.data)
+            except json.JSONDecodeError:
+                await ws.close(code=1008, message=b"bad auth")
+                return ws
+            if not isinstance(auth, dict) or auth.get("type") != "auth":
+                await ws.close(code=1008, message=b"auth required")
+                return ws
+            token = auth.get("token")
+            claimed = auth.get("node_id")
+            peer_node_id = mesh_auth.verify_token(token) if isinstance(token, str) else None
+            if not peer_node_id or (isinstance(claimed, str) and claimed != peer_node_id):
+                await ws.close(code=1008, message=b"unauthorized")
+                return ws
+            await ws.send_str(json.dumps({"status": "ok"}))
+
+            # 2) signed event stream
+            async for msg in ws:
+                if msg.type != aiohttp.WSMsgType.TEXT or not msg.data:
+                    continue
+                limited = _rate_limit_ws(peer_node_id)
+                if limited:
+                    continue
+                try:
+                    envelope = json.loads(msg.data)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(envelope, dict):
+                    continue
+                valid, reason, signed_node = mesh_trust.verify(envelope, expected_node_id=peer_node_id)
+                if not valid:
+                    _record_collab_activity("tamper", node_id=peer_node_id, op=envelope.get("op", "unknown"), status=403, reason=reason)
+                    continue
+                try:
+                    entry = collab_vault.append_event(signed_node, envelope["op"], envelope["payload"], envelope["sig"])
+                except (VaultError, KeyError) as exc:
+                    logger.warning("ws relay append failed: %s", exc)
+                    continue
+                broadcast({"type": "collab_event", "data": entry, "timestamp": entry["ts"]})
+                _record_collab_activity("audit", node_id=entry["node"], op=entry["op"], ledger_id=entry["id"], status="verified")
+                # Inbound events originated on a peer's ledger; do NOT re-export
+                # them to partners (avoids echo/loops). This node only broadcasts
+                # to its local frontend and lets partner-forwarding be driven by
+                # the originating node's own relay path.
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.info("ws relay link ended or failed", exc_info=True)
+        finally:
+            pass
+        await ws.close()
+        return ws
+
     app.router.add_get("/", index)
     app.router.add_get("/index.html", index)
     app.router.add_get("/api/state", api_state)
@@ -907,12 +1043,15 @@ def make_app():
     app.router.add_post("/api/mesh/revoke/prepare", api_mesh_prepare_revoke)
     app.router.add_post("/api/mesh/revoke", api_mesh_revoke)
     app.router.add_get("/ws", aio_ws)
+    app.router.add_get("/ws/relay", api_ws_relay)
     return app
 
 async def http_server():
     async def _on_shutdown(_app):
         if aiohttp is not None:
             await relay_client.close()
+            for client in ws_relay_clients.values():
+                await client.stop()
     app = make_app()
     app.on_cleanup.append(_on_shutdown)
     runner = web.AppRunner(app)
@@ -934,6 +1073,7 @@ def main():
     # drain the relay retry queue in the background while serving
     if aiohttp is not None:
         asyncio.ensure_future(relay_client.drain_loop())
+    _spawn_ws_links()  # persistent outbound WS links to partners (fallback: HTTP)
     try:
         loop.run_until_complete(asyncio.gather(*tasks))
     except KeyboardInterrupt:
