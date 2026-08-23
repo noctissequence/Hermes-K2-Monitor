@@ -652,15 +652,28 @@ def make_app():
         _record_viewer_access("/api/state", _client_ip(request))
         scan_tasks(); update_agents()
         shared = {}
+        mesh_msgs = []
         try:
             cs = collab_vault.collab_state()
             shared = cs.get("tasks", {}) if isinstance(cs, dict) else {}
-        except (OSError, TypeError, ValueError):
+            for entry in reversed(collab_vault.read_ledger(limit=100)):
+                if isinstance(entry, dict) and entry.get("op") == "message":
+                    p = entry.get("payload", {}) or {}
+                    mesh_msgs.append({
+                        "from": entry.get("node", "mesh"),
+                        "message": p.get("text") or p.get("message") or "",
+                        "timestamp": entry.get("ts"),
+                    })
+                    if len(mesh_msgs) >= 40:
+                        break
+        except (OSError, TypeError, ValueError, AttributeError):
             shared = {}
+            mesh_msgs = []
         return web.json_response({"agents": state["agents"], "tasks": state["tasks"],
                                   "discussion": state["discussion"],
                                   "health": state["health"], "stats": state["stats"],
-                                  "collab": _collab_status(), "shared_tasks": shared})
+                                  "collab": _collab_status(), "shared_tasks": shared,
+                                  "mesh_messages": mesh_msgs})
 
     async def api_security(request):
         if not _view_allowed(request):
@@ -715,6 +728,9 @@ def make_app():
             return web.json_response({"status": "rejected", "reason": str(exc)}, status=503)
         broadcast({"type": "collab_event", "data": entry, "timestamp": entry["ts"]})
         _record_collab_activity("audit", node_id=entry["node"], op=entry["op"], ledger_id=entry["id"], status="verified")
+        if body.get("op") == "message":
+            p = body.get("payload", {}) or {}
+            broadcast({"type": "mesh_message", "from": entry["node"], "message": p.get("text") or p.get("message") or "", "timestamp": entry["ts"]})
         # best-effort replicate to partner VPS (WS link preferred, HTTP fallback).
         # Event sudah masuk ledger; kegagalan relay TIDAK membuat request gagal.
         try:

@@ -66,6 +66,8 @@ body{background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:13p
 .chat-msg{display:flex;flex-direction:column;max-width:78%;padding:3px 10px;margin-bottom:5px;border-radius:5px;font-size:10px;line-height:1.35}
 .chat-msg.hermes1{align-self:flex-end;background:#0a1a12;border:1px solid rgba(0,255,157,.12);border-left:2px solid var(--green)}
 .chat-msg.hermes2{align-self:flex-start;background:#0a0a1a;border:1px solid rgba(51,153,255,.12);border-right:2px solid var(--blue)}
+.chat-msg.mesh-msg{align-self:flex-end;background:#1a0a1a;border:1px solid rgba(255,180,84,.2);border-left:2px solid var(--amber)}
+.chat-msg.mesh-msg .msg-from{color:var(--amber)}
 .chat-msg.system{align-self:center;background:transparent;border:none;color:#454d4f;font-size:9px;padding:4px 8px}
 .chat-msg .msg-from{font-size:7px;font-weight:600;text-transform:uppercase;letter-spacing:.2px;margin-bottom:1px}
 .chat-msg.hermes1 .msg-from{color:var(--green)} .chat-msg.hermes2 .msg-from{color:var(--blue)} .chat-msg.system .msg-from{display:none}
@@ -407,22 +409,26 @@ function renderTasks(tasks){
 function renderChat(animateNew){
   // desktop
   var feed=document.getElementById('chat-feed');
-  if(feed){feed.innerHTML=chatHTML(discussionEntries,animateNew);}
+  if(feed){feed.innerHTML=chatHTML(discussionEntries,meshMessages,animateNew);}
   // mobile
   var fm=document.getElementById('chat-feed-m');
-  if(fm){fm.innerHTML=chatHTML(discussionEntries,false);}
+  if(fm){fm.innerHTML=chatHTML(discussionEntries,meshMessages,false);}
   if(feed)feed.scrollTop=feed.scrollHeight;
   if(fm)fm.scrollTop=fm.scrollHeight;
 }
-function chatHTML(arr,animateNew){
-  var html='';var start=animateNew?Math.max(0,arr.length-3):0;
-  for(var i=0;i<arr.length;i++){
-    var e=arr[i];var from=(e.from||'system').toLowerCase();
+function chatHTML(arr,meshArr,animateNew){
+  var html='';var start=animateNew?Math.max(0,((arr||[]).length+(meshArr||[]).length)-3):0;
+  var all=[];
+  (arr||[]).forEach(function(e){all.push({from:(e.from||'system').toLowerCase(),message:e.message,timestamp:e.timestamp,mesh:false});});
+  (meshArr||[]).forEach(function(e){all.push({from:(e.from||'mesh').toLowerCase(),message:e.message,timestamp:e.timestamp,mesh:true});});
+  for(var i=0;i<all.length;i++){
+    var e=all[i];var from=e.from;
     var cls='chat-msg';
-    if(from==='hermes1')cls+=' hermes1';else if(from==='hermes2')cls+=' hermes2';else cls+=' system';
+    if(from==='hermes1')cls+=' hermes1';else if(from==='hermes2')cls+=' hermes2';else if(e.mesh)cls+=' mesh-msg';else cls+=' system';
     if(animateNew&&i>=start){cls+=' msg-anim';}
+    var label=e.mesh?('MESH · '+from):from;
     var tm=e.timestamp||'';
-    html+='<div class="'+cls+'">'+(from!=='system'?'<div class="msg-from">'+esc(from)+'</div>':'')+
+    html+='<div class="'+cls+'">'+(from!=='system'||e.mesh?'<div class="msg-from">'+esc(label)+'</div>':'')+
       '<div class="msg-text">'+esc(e.message)+'</div>'+'<div class="msg-time">'+esc(shortT(tm))+'</div></div>';
   }
   return html;
@@ -436,6 +442,14 @@ function appendDiscussion(entry){
   if(discussionEntries.length>200)discussionEntries=discussionEntries.slice(-100);
   renderChat(true);
 }
+var meshMessages=[];
+function setMeshMessages(arr){meshMessages=(arr||[]).slice();renderChat(false);}
+function appendMeshMessage(entry){
+  if(!entry||!entry.message)return;
+  meshMessages.push(entry);
+  if(meshMessages.length>200)meshMessages=meshMessages.slice(-100);
+  renderChat(true);
+}
 
 /* ---- updates from server ---- */
 function updateUI(d){
@@ -443,8 +457,10 @@ function updateUI(d){
   if(d.tasks){S.tasks=d.tasks;render();}
   if(d.health){S.health=d.health;render();}
   if(d.discussion&&Array.isArray(d.discussion)){setDiscussion(d.discussion);}
+  if(d.mesh_messages&&Array.isArray(d.mesh_messages)){setMeshMessages(d.mesh_messages);}
   if(d.collab){setCollab(d.collab);}
   if(d.from&&d.message){appendDiscussion({from:d.from,message:d.message,timestamp:d.timestamp});}
+  if(d.mesh_from&&d.mesh_message){appendMeshMessage({from:d.mesh_from,message:d.mesh_message,timestamp:d.timestamp});}
 }
 
 /* ---- load sequence: render -> /api/state -> ws ---- */
@@ -470,6 +486,7 @@ function wsC(){
     else if(d.type==='agent_status'){var previous=S.agents||{};S.agents=d.data;render();Object.keys(S.agents||{}).forEach(function(id){var before=previous[id]||{},after=S.agents[id]||{};if(before.status==='working'&&after.status!=='working')notify('AGENT COMPLETE · '+id,'good');});}
     else if(d.type==='health'){S.health=d.data;render();var cpu=Number(d.data&&d.data.cpu)||0,ramTotal=Number(d.data&&d.data.ram_total_mb)||0,ramUsed=Number(d.data&&d.data.ram_used_mb)||0,diskTotal=Number(d.data&&d.data.disk_total_gb)||0,diskUsed=Number(d.data&&d.data.disk_used_gb)||0,ramPct=ramTotal?ramUsed/ramTotal*100:0,diskPct=diskTotal?diskUsed/diskTotal*100:0;if(cpu>=90)notify('HEALTH ALERT · CPU '+cpu+'%','bad');else if(ramPct>=90)notify('HEALTH ALERT · RAM '+Math.round(ramPct)+'%','bad');else if(diskPct>=90)notify('HEALTH ALERT · DISK '+Math.round(diskPct)+'%','bad');}
     else if(d.type==='discussion'){updateUI({from:d.from,message:d.message,timestamp:d.timestamp});}
+    else if(d.type==='mesh_message'){updateUI({mesh_from:d.from,mesh_message:d.message,timestamp:d.timestamp});}
     else if(d.type==='collab_event'){refreshState();if(d.data&&d.data.op==='task')notify('SHARED TASK UPDATED','good');}
     else if(d.type==='collab_activity'){appendCollabActivity(d.data);if(d.data&&d.data.kind==='rate_limit')notify('RATE LIMIT · 429 · '+(d.data.scope||'request'),'bad');if(d.data&&d.data.kind==='tamper')notify('NODE TAMPERING · request rejected','bad');if(d.data&&d.data.kind==='node')notify('NODE JOINED · '+(d.data.node_id||'unknown'),'good');}
     else if(d.type==='rate_limit'){notify('RAW WS RATE LIMIT · 429','bad');}
