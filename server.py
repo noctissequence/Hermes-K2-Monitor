@@ -129,7 +129,8 @@ def _make_ws_client(url: str, node_id: str, token: str, trust) -> WSRelayClient:
 
 
 def _spawn_ws_links():
-    """Dial one persistent outbound WS link per configured partner."""
+    """Dial one persistent outbound WS link per configured partner.
+    Must only be called once the event loop is running (create_task requires it)."""
     if not aiohttp or not WS_LINK_ENABLED or not relay_client.partners:
         return
     local_id = os.environ.get("COLLAB_LOCAL_NODE_ID", "mesh-local")
@@ -140,6 +141,14 @@ def _spawn_ws_links():
         client = _make_ws_client(url, local_id, local_token, mesh_trust)
         ws_relay_clients[url] = client
         client.start()
+
+
+async def _spawn_ws_links_after_loop():
+    """Coroutine that waits for the loop to be running, then spawns WS links.
+    Fixes 'no running event loop' crash when create_task is called before the
+    loop starts (first tick of the serving loop)."""
+    await asyncio.sleep(0.2)  # let the loop start serving
+    _spawn_ws_links()
 
 
 def _sign_envelope(trust, node_id: str, op: str, payload: dict) -> dict:
@@ -1092,7 +1101,9 @@ def main():
     # drain the relay retry queue in the background while serving
     if aiohttp is not None:
         asyncio.ensure_future(relay_client.drain_loop())
-    _spawn_ws_links()  # persistent outbound WS links to partners (fallback: HTTP)
+    # spawn persistent outbound WS links AFTER the loop is running (a sync call
+    # here crashes with "no running event loop"); HTTP relay is the fallback
+    tasks.append(_spawn_ws_links_after_loop())
     try:
         loop.run_until_complete(asyncio.gather(*tasks))
     except KeyboardInterrupt:
